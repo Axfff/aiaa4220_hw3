@@ -33,6 +33,35 @@ def linear_lr_schedule(percent_done: float) -> float:
     return 1 - percent_done
 
 
+def warmup_cosine_lr_schedule(
+    percent_done: float, warmup_percent: float = 0.1
+) -> float:
+    """
+    Learning rate schedule with linear warmup and cosine decay.
+
+    Args:
+        percent_done: Current progress through training (0.0 to 1.0)
+        warmup_percent: Percentage of training to use for warmup (default: 0.1 = 10%)
+
+    Returns:
+        Learning rate multiplier (0.0 to 1.0)
+
+    Example:
+        warmup_percent=0.1 means:
+        - [0%, 10%]: Linear warmup from 0.0 to 1.0
+        - [10%, 100%]: Cosine decay from 1.0 to 0.0
+    """
+    import math
+
+    if percent_done < warmup_percent:
+        # Linear warmup phase
+        return percent_done / warmup_percent
+    else:
+        # Cosine decay phase
+        progress = (percent_done - warmup_percent) / (1.0 - warmup_percent)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
 @baseline_registry.register_agent_access_mgr
 class SingleAgentAccessMgr(AgentAccessMgr):
     def __init__(
@@ -78,8 +107,23 @@ class SingleAgentAccessMgr(AgentAccessMgr):
         self.agent_name = agent_name
         self._nbuffers = 2 if self._ppo_cfg.use_double_buffered_sampler else 1
         self._percent_done_fn = percent_done_fn
+
+        # Determine learning rate schedule
         if lr_schedule_fn is None:
-            lr_schedule_fn = linear_lr_schedule
+            # Check if warmup+cosine schedule is requested
+            use_warmup_cosine = getattr(
+                self._ppo_cfg, "use_warmup_cosine_lr_schedule", False
+            )
+            if use_warmup_cosine:
+                warmup_percent = getattr(
+                    self._ppo_cfg, "lr_schedule_warmup_percent", 0.1
+                )
+                lr_schedule_fn = lambda x: warmup_cosine_lr_schedule(
+                    x, warmup_percent
+                )
+            else:
+                lr_schedule_fn = linear_lr_schedule
+
         self._init_policy_and_updater(lr_schedule_fn, resume_state)
 
     def _init_policy_and_updater(self, lr_schedule_fn, resume_state):
@@ -307,10 +351,12 @@ class SingleAgentAccessMgr(AgentAccessMgr):
                 self._lr_scheduler.load_state_dict(state["lr_sched_state"])
 
     def after_update(self):
-        if (
+        # Step LR scheduler if any LR schedule is enabled
+        use_any_lr_schedule = (
             self._ppo_cfg.use_linear_lr_decay
-            and self._lr_scheduler is not None
-        ):
+            or getattr(self._ppo_cfg, "use_warmup_cosine_lr_schedule", False)
+        )
+        if use_any_lr_schedule and self._lr_scheduler is not None:
             self._lr_scheduler.step()  # type: ignore
         self._updater.after_update()
 
