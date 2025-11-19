@@ -107,8 +107,8 @@ habitat_baselines:
   verbose: True
   trainer_name: "falcon_trainer"
   torch_gpu_id: 0
-  tensorboard_dir: "evaluation/falcon/hm3d_2v100/tb"
-  video_dir: "evaluation/falcon/hm3d_2v100/video"
+  tensorboard_dir: "evaluation/lr_schedule_falcon/hm3d_2v100/tb"
+  video_dir: "evaluation/falcon/lr_schedule_hm3d_2v100/video"
   test_episode_count: -1
 
   # OPTIMIZATION 1: Increase parallel environments (4 -> 16)
