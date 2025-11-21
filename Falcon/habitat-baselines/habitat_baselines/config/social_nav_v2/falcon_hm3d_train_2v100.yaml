@@ -4,6 +4,15 @@
 # Expected VRAM usage: 20-28GB per GPU
 # Expected speedup: 4-6x faster than mini config
 # Expected GPU utilization: 70-90% per GPU
+#
+# Optimizations applied:
+# 1. Increased parallel environments (16 vs 4)
+# 2. Multi-threading enabled
+# 3. Larger batch size (ppo_epoch=4, num_mini_batch=4)
+# 4. Full model backbone (ResNet50 + LSTM512)
+# 5. Distributed training enabled (DD-PPO)
+# 6. Higher learning rate (2.0e-4)
+# 7. Warmup + Cosine LR schedule (reduces oscillation)
 
 defaults:
   - /benchmark/nav/socialnav_v2: falcon_hm3d_task_for_train
@@ -152,6 +161,13 @@ habitat_baselines:
       tau: 0.95
       use_linear_clip_decay: False
       use_linear_lr_decay: False
+
+      # OPTIMIZATION 7: Warmup + Cosine Decay LR Schedule
+      # Linear warmup for 10% of training, then cosine decay to 0
+      # Reduces oscillation and improves convergence
+      use_warmup_cosine_lr_schedule: True
+      lr_schedule_warmup_percent: 0.1  # 10% warmup (80k steps out of 800k)
+
       reward_window_size: 50
       use_normalized_advantage: False
 

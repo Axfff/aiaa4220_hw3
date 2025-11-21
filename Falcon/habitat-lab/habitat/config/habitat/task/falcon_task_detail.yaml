@@ -35,6 +35,14 @@ measurements:
     collide_human_penalty: -0.015
     close_to_human_penalty: -0.003
     trajectory_cover_penalty: -0.0005
-    cover_future_dis_thre: 0.05 
+    cover_future_dis_thre: 0.05
     robot_idx: 0
     facing_human_dis: 2.0
+    # Elliptical penalty zone parameters (velocity-aware)
+    ellipse_forward_expansion: 2.0    # Multiplier for forward expansion (2x base radius)
+    ellipse_backward_shrink: 0.5      # Multiplier for backward shrinkage (0.5x base radius)
+    ellipse_velocity_threshold: 0.1   # Minimum velocity (m/s) to activate elliptical penalty
+    ellipse_velocity_scale: 1.0       # Scaling factor for velocity-to-radius conversion
+    # Obstacle proximity penalty parameters (distance-based soft penalty for static obstacles)
+    obstacle_proximity_penalty: -0.0015  # Penalty coefficient (gentler than human penalty)
+    obstacle_proximity_threshold: 1.0    # Distance threshold in meters (obstacles within this range incur penalty)

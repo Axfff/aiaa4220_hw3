@@ -298,8 +298,9 @@ class PPOConfig(HabitatBaselinesBaseConfig):
     use_gae: bool = True
     use_linear_lr_decay: bool = False
     use_linear_clip_decay: bool = False
-    lr_schedule_type: str = "linear"  # "linear" or "cosine"
-    lr_schedule_params: Dict[str, Any] = field(default_factory=dict)  # Params for cosine schedule
+    # Warmup + Cosine Decay LR Schedule
+    use_warmup_cosine_lr_schedule: bool = False
+    lr_schedule_warmup_percent: float = 0.1  # 10% of training for warmup
     gamma: float = 0.99
     tau: float = 0.95
     reward_window_size: int = 50

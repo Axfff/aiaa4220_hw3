@@ -230,6 +230,15 @@ class MultiAgentNavReward(Measure):
 
         # FIX: Add hesitation penalty to encourage movement
         self._hesitation_penalty = getattr(config, 'hesitation_penalty', -0.01)
+        # Elliptical penalty zone parameters
+        self._ellipse_forward_expansion = getattr(config, 'ellipse_forward_expansion', 2.0)
+        self._ellipse_backward_shrink = getattr(config, 'ellipse_backward_shrink', 0.5)
+        self._ellipse_velocity_threshold = getattr(config, 'ellipse_velocity_threshold', 0.1)
+        self._ellipse_velocity_scale = getattr(config, 'ellipse_velocity_scale', 1.0)
+
+        # Obstacle proximity penalty parameters
+        self._obstacle_proximity_penalty = getattr(config, 'obstacle_proximity_penalty', -0.0015)
+        self._obstacle_proximity_threshold = getattr(config, 'obstacle_proximity_threshold', 1.0)
 
         self._human_nums = 0
         self._prev_robot_pos = None
@@ -251,7 +260,102 @@ class MultiAgentNavReward(Measure):
             > self._config.human_face_robot_threshold
         )
         return facing
-    
+
+    def _calculate_elliptical_distance(self, robot_pos, human_pos, human_velocity, human_idx):
+        """
+        Calculate effective distance from robot to human accounting for elliptical
+        penalty zone that expands in the direction of human movement.
+
+        Args:
+            robot_pos: Robot position (x, y, z)
+            human_pos: Human position (x, y, z)
+            human_velocity: Human velocity (linear, angular) from HumanVelocitySensor
+            human_idx: Index of the human agent (1-indexed, 0 is robot)
+
+        Returns:
+            Effective elliptical distance for penalty calculation
+        """
+        # Extract 2D positions (x, z plane - ignoring y/height)
+        robot_2d = np.array([robot_pos[0], robot_pos[2]])
+        human_2d = np.array([human_pos[0], human_pos[2]])
+
+        # Get linear velocity magnitude (first component of human_velocity)
+        velocity_magnitude = abs(human_velocity[0]) if len(human_velocity) > 0 else 0.0
+
+        # If velocity is below threshold, use circular distance
+        if velocity_magnitude < self._ellipse_velocity_threshold:
+            return np.linalg.norm(robot_pos - human_pos, ord=2)
+
+        # Calculate vector from human to robot
+        human_to_robot = robot_2d - human_2d
+        euclidean_distance = np.linalg.norm(human_to_robot)
+
+        # If too close, return euclidean distance (avoid numerical issues)
+        if euclidean_distance < 1e-6:
+            return 0.0
+
+        # Get human's facing direction from the articulated agent
+        # We use the human's current orientation to determine forward direction
+        human_agent_data = self._sim.get_agent_data(human_idx)
+        if hasattr(human_agent_data, 'articulated_agent'):
+            base_T = human_agent_data.articulated_agent.sim_obj.transformation
+            # Extract forward direction (first column of rotation matrix, projected to xz plane)
+            forward_3d = base_T.transform_vector(np.array([0, 0, -1]))  # Forward in agent's frame
+            forward_2d = np.array([forward_3d[0], forward_3d[2]])
+            forward_2d = forward_2d / (np.linalg.norm(forward_2d) + 1e-6)
+        else:
+            # Fallback: use normalized human_to_robot as reference
+            forward_2d = human_to_robot / (euclidean_distance + 1e-6)
+
+        # Calculate ellipse radii based on velocity
+        base_radius = self._facing_human_dis
+
+        # Forward direction: expand based on velocity
+        forward_expansion = 1.0 + velocity_magnitude * self._ellipse_forward_expansion * self._ellipse_velocity_scale
+        r_forward = base_radius * forward_expansion
+
+        # Backward direction: shrink based on velocity
+        backward_shrink = 1.0 - velocity_magnitude * self._ellipse_backward_shrink * self._ellipse_velocity_scale
+        backward_shrink = max(backward_shrink, 0.3)  # Minimum 30% of base radius
+        r_backward = base_radius * backward_shrink
+
+        # Side direction: keep base radius
+        r_side = base_radius
+
+        # Project robot position onto velocity-aligned coordinate system
+        # Forward axis: along human's movement direction
+        # Side axis: perpendicular to movement direction
+        forward_component = np.dot(human_to_robot, forward_2d)
+        side_component = np.abs(np.dot(human_to_robot, np.array([-forward_2d[1], forward_2d[0]])))
+
+        # Determine which radius to use for forward/backward
+        if forward_component >= 0:
+            # Robot is in front of human
+            r_longitudinal = r_forward
+        else:
+            # Robot is behind human
+            r_longitudinal = r_backward
+            forward_component = abs(forward_component)
+
+        # Calculate elliptical distance using the ellipse equation
+        # Normalize by respective radii and compute distance from ellipse boundary
+        normalized_forward = forward_component / r_longitudinal
+        normalized_side = side_component / r_side
+
+        # Distance from ellipse boundary
+        # If point is on ellipse: normalized_forward^2 + normalized_side^2 = 1
+        # We want the actual distance, scaled by the ellipse
+        ellipse_factor = np.sqrt(normalized_forward**2 + normalized_side**2)
+
+        if ellipse_factor < 1e-6:
+            return 0.0
+
+        # Effective distance: scale euclidean distance by ellipse factor
+        # ellipse_factor > 1 means outside ellipse, < 1 means inside
+        effective_distance = euclidean_distance / ellipse_factor
+
+        return effective_distance
+
     def update_metric(self, *args, episode, task, observations, **kwargs):
 
         # Start social nav reward
@@ -271,26 +375,41 @@ class MultiAgentNavReward(Measure):
         robot_pos = np.array(observations[use_k_robot][:3])
 
         if distance_to_target > self._allow_distance:
-            human_dis = []
+            # Check if HumanVelocitySensor is available in observations
+            has_velocity_sensor = "human_velocity_sensor" in observations
+
+            # Calculate distance to each human and apply proximity penalty
             for i in range(self._human_nums):
                 use_k_human = f"agent_{i+1}_localization_sensor"
                 human_position = observations[use_k_human][:3]
 
-                if self._use_geo_distance:
-                    path = habitat_sim.ShortestPath()
-                    path.requested_start = robot_pos
-                    path.requested_end = human_position
-                    found_path = self._sim.pathfinder.find_path(path)
-                    if found_path:
-                        distance = self._sim.geodesic_distance(robot_pos, human_position)
+                # Get human velocity if available
+                if has_velocity_sensor:
+                    # HumanVelocitySensor shape: (max_humans, 6) where each row is [x, y, z, rot, lin_vel, ang_vel]
+                    human_velocity = observations["human_velocity_sensor"][i][4:6]  # Extract [lin_vel, ang_vel]
+
+                    # Use elliptical distance calculation
+                    distance = self._calculate_elliptical_distance(
+                        robot_pos,
+                        human_position,
+                        human_velocity,
+                        human_idx=i+1  # Human indices start at 1 (0 is robot)
+                    )
+                else:
+                    # Fallback to original distance calculation if velocity sensor not available
+                    if self._use_geo_distance:
+                        path = habitat_sim.ShortestPath()
+                        path.requested_start = robot_pos
+                        path.requested_end = human_position
+                        found_path = self._sim.pathfinder.find_path(path)
+                        if found_path:
+                            distance = self._sim.geodesic_distance(robot_pos, human_position)
+                        else:
+                            distance = np.linalg.norm(human_position - robot_pos, ord=2)
                     else:
                         distance = np.linalg.norm(human_position - robot_pos, ord=2)
-                else:
-                    distance = np.linalg.norm(human_position - robot_pos, ord=2)
-                human_dis.append(distance)
-            
-            # Apply penalties for being too close to humans
-            for distance in human_dis:
+
+                # Apply penalty if within threshold
                 if distance < self._facing_human_dis:
                     penalty = self._close_to_human_penalty * np.exp(-distance / self._facing_human_dis)
                     social_nav_reward += penalty
@@ -303,13 +422,40 @@ class MultiAgentNavReward(Measure):
             task.should_end = True
             social_nav_reward += self._collide_human_penalty
 
-        # Component 4: Collision detection for the main agent and the scene 
+        # Component 4: Collision detection for the main agent and the scene
         did_rearrange_collide, collision_detail = rearrange_collision(
             self._sim, True, ignore_base=False, agent_idx=self._robot_idx
         )
         if did_rearrange_collide:
             social_nav_reward += self._collide_scene_penalty
-        
+
+        # Component 4.5: Soft penalty for approaching static obstacles (depth-based)
+        # This provides gentle guidance away from walls/obstacles before collision
+        depth_sensor_key = f"agent_{self._robot_idx}_articulated_agent_jaw_depth"
+        if depth_sensor_key in observations:
+            # Get depth observation (shape: [HEIGHT, WIDTH, 1])
+            depth_obs = observations[depth_sensor_key]
+
+            # Find minimum depth value (closest obstacle in any direction)
+            # Depth values are typically normalized [0, 1] or in meters [0, max_depth]
+            # We need to handle both cases
+            min_depth = np.min(depth_obs)
+
+            # Check if depth is normalized (values between 0 and 1)
+            # If normalized, we need to denormalize using max_depth (typically 10.0m)
+            max_depth = 10.0  # Standard max depth for Habitat depth sensors
+            if min_depth <= 1.0:
+                # Likely normalized, denormalize to meters
+                min_depth = min_depth * max_depth
+
+            # Apply soft penalty if obstacle is within threshold distance
+            if min_depth < self._obstacle_proximity_threshold:
+                # Exponential decay penalty - same pattern as human proximity
+                obstacle_penalty = self._obstacle_proximity_penalty * np.exp(
+                    -min_depth / self._obstacle_proximity_threshold
+                )
+                social_nav_reward += obstacle_penalty
+
         # Component 5: Trajectory overlap penalty with time-based weighting
         if distance_to_target > self._allow_distance and "human_future_trajectory" in task.measurements.measures:
             human_future_trajectory_temp = task.measurements.measures['human_future_trajectory']._metric
@@ -524,6 +670,14 @@ class MultiAgentNavReward(MeasurementConfig):
     hesitation_penalty: float = -0.01
     # Set the id of the agent
     robot_idx: int = 0
+    # Elliptical penalty zone parameters (velocity-aware)
+    ellipse_forward_expansion: float = 2.0
+    ellipse_backward_shrink: float = 0.5
+    ellipse_velocity_threshold: float = 0.1
+    ellipse_velocity_scale: float = 1.0
+    # Obstacle proximity penalty parameters (distance-based soft penalty)
+    obstacle_proximity_penalty: float = -0.0015
+    obstacle_proximity_threshold: float = 1.0
 
 @dataclass
 class DidMultiAgentsCollideConfig(MeasurementConfig):

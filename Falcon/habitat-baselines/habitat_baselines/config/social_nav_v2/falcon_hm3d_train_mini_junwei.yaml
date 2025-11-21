@@ -171,14 +171,14 @@ habitat_baselines:
       rnn_type: LSTM
       num_recurrent_layers: 2
       
-    auxiliary_losses: 
+    auxiliary_losses:
       people_counting:
         max_human_num: 6
-        loss_scale: 0.1   
+        loss_scale: 0.1
       guess_human_position:
         max_human_num: 6
         position_dim: 2
-        loss_scale: 0.1   
+        loss_scale: 0.1
       future_trajectory_prediction:
         max_human_num: 6
         future_step: 4

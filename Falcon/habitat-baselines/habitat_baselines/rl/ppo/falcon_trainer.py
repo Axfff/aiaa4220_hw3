@@ -639,6 +639,22 @@ class FalconTrainer(BaseRLTrainer):
         # Log perf metrics.
         writer.add_scalar("perf/fps", fps, self.num_steps_done)
 
+        # Log learning rate
+        try:
+            # Handle MultiAgentAccessMgr (has _agents list)
+            if hasattr(self._agent, "_agents"):
+                lr_scheduler = self._agent._agents[0]._lr_scheduler
+            else:
+                # Handle SingleAgentAccessMgr
+                lr_scheduler = self._agent._lr_scheduler
+
+            if lr_scheduler is not None:
+                current_lr = lr_scheduler.get_last_lr()[0]
+                writer.add_scalar("perf/learning_rate", current_lr, self.num_steps_done)
+        except Exception:
+            # Silently skip if LR scheduler not available
+            pass
+
         for timer_name, timer_val in g_timer.items():
             writer.add_scalar(
                 f"perf/{timer_name}",

@@ -1,20 +1,37 @@
 # @package _global_
-# Optimized config for single V100 (32GB) - Maximum single-GPU utilization
-# Full Model: ResNet50 + LSTM512
-# Expected VRAM usage: 20-28GB
-# Expected speedup: 2-3x faster than mini config
-# Expected GPU utilization: 70-90%
+# Evaluation config for falcon_hm3d_train_2v100_ellipse.yaml
+# Full Model: ResNet50 + LSTM512 with Velocity-Aware Elliptical Penalty
 #
-# Optimizations applied:
-# 1. Increased parallel environments (12 vs 4)
-# 2. Multi-threading enabled
-# 3. Larger batch size (ppo_epoch=4, num_mini_batch=4)
-# 4. Full model backbone (ResNet50 + LSTM512)
-# 5. Higher learning rate (2.0e-4)
-# 6. Warmup + Cosine LR schedule (reduces oscillation)
+# KEY FEATURES:
+# 1. Elliptical Proximity Penalty (velocity-aware for humans)
+#    - Requires human_velocity_sensor in obs_keys
+#    - Penalty zone expands 2x in direction of human movement
+#    - Penalty zone shrinks 0.5x behind moving humans
+#
+# 2. Obstacle Proximity Penalty (depth-based for static obstacles)
+#    - Uses agent_0_articulated_agent_jaw_depth sensor
+#    - Soft penalty when approaching walls/obstacles within 1.0m
+#    - Default: penalty=-0.0015, threshold=1.0m (from falcon_task_detail.yaml)
+#    - Gentler than human penalty to provide smooth guidance
+#
+# Usage:
+#   python -u -m habitat-baselines.habitat_baselines.run \
+#     --config-name=social_nav_v2/falcon_hm3d_2v100_ellipse_eval.yaml \
+#     habitat_baselines.num_environments=4 \
+#     habitat.dataset.data_path=data/datasets/pointnav/social-hm3d/minival/minival.json.gz \
+#     habitat_baselines.eval_ckpt_path_dir=evaluation/falcon/lr_schedule_hm3d_2v100_ellipse/checkpoints/eval.pth
+#
+# With video:
+#   python -u -m habitat-baselines.habitat_baselines.run \
+#     --config-name=social_nav_v2/falcon_hm3d_2v100_ellipse_eval.yaml \
+#     habitat_baselines.num_environments=4 \
+#     habitat.dataset.data_path=data/datasets/pointnav/social-hm3d/minival/minival.json.gz \
+#     habitat_baselines.eval_ckpt_path_dir=evaluation/falcon/lr_schedule_hm3d_2v100_ellipse/checkpoints/eval.pth \
+#     habitat_baselines.video_dir=evaluation/falcon/lr_schedule_hm3d_2v100_ellipse/video \
+#     habitat_baselines.eval.video_option=[\"disk\"]
 
 defaults:
-  - /benchmark/nav/socialnav_v2: falcon_hm3d_task_for_train
+  - /benchmark/nav/socialnav_v2: falcon_hm3d_task
   - /habitat_baselines: habitat_baselines_rl_config_base
   - /habitat/simulator/sim_sensors@habitat_baselines.eval.extra_sim_sensors.third_rgb_sensor: third_rgb_sensor
   - /habitat_baselines/rl/policy@habitat_baselines.rl.policy.agent_1: single_fixed
@@ -37,15 +54,15 @@ defaults:
   - _self_
 
 habitat:
-  dataset:
-    split: train
+  environment:
+    iterator_options:
+      shuffle: False  # keep the same order for reproducible evaluation
   gym:
     obs_keys:
+      # Only include sensors needed for inference (including velocity sensor for elliptical penalty)
       - agent_0_articulated_agent_jaw_depth
       - agent_0_pointgoal_with_gps_compass
-      - agent_0_localization_sensor
-      - agent_0_human_num_sensor
-      - agent_0_oracle_humanoid_future_trajectory
+      - human_velocity_sensor  # ADDED: Required for elliptical penalty during evaluation
   task:
     actions:
       agent_0_discrete_stop:
@@ -101,25 +118,26 @@ habitat:
         allow_dyn_slide: True
 
 habitat_baselines:
-  evaluate: False
+  evaluate: True
   verbose: True
-  trainer_name: "falcon_trainer"
+  trainer_name: "ddppo"
   torch_gpu_id: 0
-  tensorboard_dir: "evaluation/falcon/hm3d_1v100_opt/tb"
-  video_dir: "evaluation/falcon/hm3d_1v100_opt/video"
+  tensorboard_dir: "evaluation/falcon/lr_schedule_hm3d_2v100_ellipse/tb"
+  video_dir: "evaluation/falcon/lr_schedule_hm3d_2v100_ellipse/video"
   test_episode_count: -1
 
-  # Increase environments for single GPU (4 -> 12)
-  num_environments: 12
+  # Default checkpoint path - override with command line
+  eval_ckpt_path_dir: "evaluation/falcon/lr_schedule_hm3d_2v100_ellipse/checkpoints/eval.pth"
 
-  checkpoint_folder: "evaluation/falcon/hm3d_1v100_opt/checkpoints"
+  num_environments: 8
+  checkpoint_folder: "evaluation/falcon/lr_schedule_hm3d_2v100_ellipse/checkpoints"
   num_updates: -1
-  total_num_steps: 800000
+  total_num_steps: 1e8
   log_interval: 10
-  num_checkpoints: 20
+  num_checkpoints: 200
 
-  # Enable multi-threading
-  force_torch_single_threaded: False
+  # Force PyTorch to be single threaded for better eval performance
+  force_torch_single_threaded: True
 
   load_resume_state_config: False
 
@@ -129,6 +147,7 @@ habitat_baselines:
   eval:
     use_ckpt_config: False
     should_load_ckpt: True
+    # video_option: ["disk"]
 
   rl:
     agent:
@@ -142,6 +161,7 @@ habitat_baselines:
       agent_0:
         name: "PointNavResNetPolicy"
     ppo:
+      # PPO params (only used for model architecture during loading)
       clip_param: 0.2
       ppo_epoch: 4
       num_mini_batch: 4
@@ -156,20 +176,12 @@ habitat_baselines:
       tau: 0.95
       use_linear_clip_decay: False
       use_linear_lr_decay: False
-
-      # Warmup + Cosine Decay LR Schedule
-      # Linear warmup for 10% of training, then cosine decay to 0
-      # Reduces oscillation and improves convergence
-      use_warmup_cosine_lr_schedule: True
-      lr_schedule_warmup_percent: 0.1  # 10% warmup (80k steps out of 800k)
-
       reward_window_size: 50
       use_normalized_advantage: False
 
-      # Full model size for maximum performance
+      # Full model size (must match training config)
       hidden_size: 512
 
-      # Double buffered sampling not supported in multi-agent training
       use_double_buffered_sampler: False
 
     ddppo:
@@ -181,20 +193,7 @@ habitat_baselines:
       train_encoder: True
       reset_critic: True
 
-      # Full model backbone (ResNet50)
+      # Full model backbone (must match training config)
       backbone: resnet50
       rnn_type: LSTM
       num_recurrent_layers: 2
-
-    auxiliary_losses:
-      people_counting:
-        max_human_num: 6
-        loss_scale: 0.1
-      guess_human_position:
-        max_human_num: 6
-        position_dim: 2
-        loss_scale: 0.1
-      future_trajectory_prediction:
-        max_human_num: 6
-        future_step: 4
-        loss_scale: 0.1
