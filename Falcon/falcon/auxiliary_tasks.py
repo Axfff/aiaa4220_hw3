@@ -99,12 +99,12 @@ class PeopleCounting(nn.Module):
         target = batch["observations"]["human_num_sensor"].squeeze(-1).long()  # (batch_size,)
         
         # Calculate CrossEntropy loss
-        ori_loss = self.loss_fn(logits, target) 
+        ori_loss = self.loss_fn(logits, target)
 
-        sigmoid_loss = torch.sigmoid(ori_loss)
+        # FIX: Remove sigmoid that causes gradient vanishing
+        # Use clamping instead to prevent extreme values
+        loss = self.loss_scale * torch.clamp(ori_loss, max=5.0)
 
-        loss = self.loss_scale * sigmoid_loss
-        
         return dict(loss=loss)
 
 @baseline_registry.register_auxiliary_loss(name="guess_human_position")
@@ -183,10 +183,9 @@ class GuessHumanPosition(nn.Module):
                 normalized_loss = masked_loss / loss_mean
 
             loss = normalized_loss.sum() / mask.sum()
-        
-        sigmoid_loss = torch.sigmoid(loss)
-        
-        final_loss = sigmoid_loss * self.loss_scale
+
+        # FIX: Remove sigmoid, use direct loss with clamping
+        final_loss = torch.clamp(loss, max=2.0) * self.loss_scale
 
         return dict(loss=final_loss)
 
@@ -382,14 +381,10 @@ class FutureTrajectoryPrediction(nn.Module):
             mask   # Valid human mask
         )
 
-        # Apply sigmoid to bound the loss (prevents extreme values)
-        sigmoid_loss = torch.sigmoid(loss)
+            loss = normalized_loss.sum() / mask.sum()
 
-        # Scale by curriculum-aware loss coefficient
-        # Phase 1: Higher weight to quickly train Transformer-MDN
-        # Phase 2: Normal weight for balanced joint training
-        curriculum_loss_scale = self.get_curriculum_loss_scale()
-        final_loss = sigmoid_loss * curriculum_loss_scale
+        # FIX: Remove sigmoid, use direct loss with clamping
+        final_loss = torch.clamp(loss, max=2.0) * self.loss_scale
 
         return dict(loss=final_loss)
 

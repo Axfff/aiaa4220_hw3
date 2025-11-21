@@ -314,6 +314,8 @@ class PPOConfig(HabitatBaselinesBaseConfig):
     # policy inference time during rollout generation
     # Not that this does not change the memory requirements
     use_double_buffered_sampler: bool = False
+    # Optional: enable mixed precision training via torch.cuda.amp
+    use_amp: bool = False
 
 
 @dataclass

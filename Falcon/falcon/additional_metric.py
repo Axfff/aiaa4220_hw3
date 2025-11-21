@@ -228,6 +228,8 @@ class MultiAgentNavReward(Measure):
         self._close_to_human_penalty = config.close_to_human_penalty
         self._facing_human_dis = config.facing_human_dis
 
+        # FIX: Add hesitation penalty to encourage movement
+        self._hesitation_penalty = getattr(config, 'hesitation_penalty', -0.01)
         # Elliptical penalty zone parameters
         self._ellipse_forward_expansion = getattr(config, 'ellipse_forward_expansion', 2.0)
         self._ellipse_backward_shrink = getattr(config, 'ellipse_backward_shrink', 0.5)
@@ -239,13 +241,15 @@ class MultiAgentNavReward(Measure):
         self._obstacle_proximity_threshold = getattr(config, 'obstacle_proximity_threshold', 1.0)
 
         self._human_nums = 0
+        self._prev_robot_pos = None
 
     def reset_metric(self, *args, episode, task, observations, **kwargs):
         if "human_num" in episode.info:
             self._human_nums = min(episode.info['human_num'], self._sim.num_articulated_agents - 1)
-        else: 
+        else:
             self._human_nums = 0
         self._metric = 0.0
+        self._prev_robot_pos = None
         
     def _check_human_facing_robot(self, human_pos, robot_pos, human_idx):
         base_T = self._sim.get_agent_data(
@@ -462,6 +466,16 @@ class MultiAgentNavReward(Measure):
                         social_nav_reward += self._trajectory_cover_penalty * time_weight
                         break
 
+        # FIX Component 6: Hesitation penalty - penalize robot for not moving
+        # This prevents the "freeze" strategy where robot stops immediately
+        if self._prev_robot_pos is not None and distance_to_target > self._allow_distance:
+            movement = np.linalg.norm(robot_pos - self._prev_robot_pos)
+            # If robot barely moved (< 0.05m), apply penalty
+            if movement < 0.05:
+                social_nav_reward += self._hesitation_penalty
+
+        self._prev_robot_pos = robot_pos.copy()
+
         self._metric = social_nav_reward
 
 @registry.register_measure
@@ -652,6 +666,8 @@ class MultiAgentNavReward(MeasurementConfig):
     close_to_human_penalty: float = -0.025
     trajectory_cover_penalty: float = -0.025
     cover_future_dis_thre: float = -0.05
+    # FIX: Add hesitation penalty parameter
+    hesitation_penalty: float = -0.01
     # Set the id of the agent
     robot_idx: int = 0
     # Elliptical penalty zone parameters (velocity-aware)
