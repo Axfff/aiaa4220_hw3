@@ -122,13 +122,13 @@ habitat_baselines:
   video_dir: "evaluation/falcon/hm3d_2v100_optimized/video"
   test_episode_count: -1
 
-  # OPTIMIZATION 1: 增加并行环境数以利用剩余VRAM
-  # 从 8 → 12 → 18 (每增加6个环境约消耗~10GB VRAM)
-  num_environments: 18  # Was: 12, optimized for ~30GB/32GB usage
+  # CONSERVATIVE: Reduce environments to prevent malloc errors
+  # Safe memory configuration for stable training
+  num_environments: 12  # Reduced from 18 to avoid malloc_consolidate errors
 
   checkpoint_folder: "evaluation/falcon/hm3d_2v100_optimized/checkpoints"
   num_updates: -1
-  total_num_steps: 1638144  # 711 updates × 2304 frames (18 envs × 64 steps × 2 GPUs)
+  total_num_steps: 1092096  # 711 updates × 1536 frames (12 envs × 64 steps × 2 GPUs)
   log_interval: 10
   num_checkpoints: 30  # Adjusted for 711 updates
 
@@ -159,9 +159,9 @@ habitat_baselines:
       clip_param: 0.2
       ppo_epoch: 2
 
-      # OPTIMIZATION 3: 增加mini-batch数量以匹配更大的batch size
-      # 2304 frames / 9 = 256 samples per mini-batch
-      num_mini_batch: 9  # Was: 6, adjusted for 18 envs
+      # CONSERVATIVE: Adjust mini-batch for 12 envs
+      # 1536 frames / 6 = 256 samples per mini-batch
+      num_mini_batch: 6  # Adjusted for 12 envs
 
       use_amp: True
       value_loss_coef: 0.5
