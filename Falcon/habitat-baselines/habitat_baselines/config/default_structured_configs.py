@@ -301,6 +301,7 @@ class PPOConfig(HabitatBaselinesBaseConfig):
     # Warmup + Cosine Decay LR Schedule
     use_warmup_cosine_lr_schedule: bool = False
     lr_schedule_warmup_percent: float = 0.1  # 10% of training for warmup
+    lr_schedule_eta_min: float = 1e-5  # Minimum learning rate for cosine schedule
     gamma: float = 0.99
     tau: float = 0.95
     reward_window_size: int = 50

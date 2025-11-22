@@ -22,6 +22,11 @@ export MKL_NUM_THREADS=8
 export VECLIB_MAXIMUM_THREADS=8
 export NUMEXPR_NUM_THREADS=8
 
+# Set random seeds for reproducibility
+export PYTHONHASHSEED=42
+export HABITAT_SEED=42
+export CUDA_LAUNCH_BLOCKING=1  # For better error reporting
+
 # Enable NCCL optimizations for V100
 export NCCL_DEBUG=INFO
 export NCCL_IB_DISABLE=1  # Disable InfiniBand if not available
@@ -34,6 +39,8 @@ export MASTER_PORT=29500
 
 echo "Environment variables set:"
 echo "  OMP_NUM_THREADS=$OMP_NUM_THREADS"
+echo "  PYTHONHASHSEED=$PYTHONHASHSEED"
+echo "  HABITAT_SEED=$HABITAT_SEED"
 echo "  NCCL_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME"
 echo "  GLOO_SOCKET_IFNAME=$GLOO_SOCKET_IFNAME"
 echo ""

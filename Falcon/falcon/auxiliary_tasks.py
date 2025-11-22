@@ -381,8 +381,6 @@ class FutureTrajectoryPrediction(nn.Module):
             mask   # Valid human mask
         )
 
-            loss = normalized_loss.sum() / mask.sum()
-
         # FIX: Remove sigmoid, use direct loss with clamping
         final_loss = torch.clamp(loss, max=2.0) * self.loss_scale
 

@@ -37,9 +37,12 @@ defaults:
 habitat:
   dataset:
     split: train
+    content_scenes: ["*"]  # 使用所有145个HM3D训练场景
   simulator:
     scene_dataset: "data/scene_datasets/hm3d/hm3d.scene_dataset_config.json"
-    content_scenes: ["*"]  # 使用所有145个HM3D训练场景
+    # Enable lighting for robot assets to fix rendering warnings
+    renderer:
+      enable_pbr: True  # Physically-based rendering for proper lighting
   environment:
     # OPTIMIZATION: Environment diversity settings to avoid overfitting
     iterator_options:
@@ -47,10 +50,7 @@ habitat:
       cycle: True                     # Cycle back to start when all episodes finished
       group_by_scene: True           # Group episodes by scene for efficiency
       max_scene_repeat_episodes: -1  # No episode limit per scene
-      max_scene_repeat_steps: 10000  # Max 10K steps per scene (标准最佳实践)
       num_episode_sample: -1         # Use all episodes (-1 = no sampling)
-      step_repetition_range: 0.3     # 增强随机性，避免同步场景切换
-      seed: 42                       # Random seed for reproducibility
   gym:
     obs_keys:
       - agent_0_articulated_agent_jaw_rgb
@@ -122,17 +122,17 @@ habitat_baselines:
   video_dir: "evaluation/falcon/hm3d_2v100_optimized/video"
   test_episode_count: -1
 
-  # CONSERVATIVE: Reduce environments to prevent malloc errors
-  # Safe memory configuration for stable training
-  num_environments: 12  # Reduced from 18 to avoid malloc_consolidate errors
+  # OPTIMIZED: Increased for better VRAM utilization (20.8GB/32GB)
+  # Now stable after fixing configuration and DDP issues
+  num_environments: 16  # Increased from 12, using ~26-27GB VRAM
 
   checkpoint_folder: "evaluation/falcon/hm3d_2v100_optimized/checkpoints"
   num_updates: -1
-  total_num_steps: 1092096  # 711 updates × 1536 frames (12 envs × 64 steps × 2 GPUs)
+  total_num_steps: 1456128  # 711 updates × 2048 frames (16 envs × 64 steps × 2 GPUs)
   log_interval: 10
   num_checkpoints: 30  # Adjusted for 711 updates
 
-  # OPTIMIZATION 2: Enable multi-threading
+  # CONSERVATIVE: Disable multi-threading to prevent memory contention
   force_torch_single_threaded: False
 
   load_resume_state_config: False
@@ -159,9 +159,9 @@ habitat_baselines:
       clip_param: 0.2
       ppo_epoch: 2
 
-      # CONSERVATIVE: Adjust mini-batch for 12 envs
-      # 1536 frames / 6 = 256 samples per mini-batch
-      num_mini_batch: 6  # Adjusted for 12 envs
+      # OPTIMIZED: Adjust mini-batch for 16 envs
+      # 2048 frames / 8 = 256 samples per mini-batch
+      num_mini_batch: 8  # Adjusted for 16 envs
 
       use_amp: True
       value_loss_coef: 0.5
@@ -177,13 +177,12 @@ habitat_baselines:
       gamma: 0.99
       tau: 0.95
       use_linear_clip_decay: False
-      use_linear_lr_decay: False  # Disabled for cosine schedule
+      use_linear_lr_decay: False  # Disabled for warmup+cosine schedule
 
-      # Cosine Learning Rate Schedule
-      lr_schedule_type: "cosine"
-      lr_schedule_params:
-        T_max: 711  # Total number of updates (was 1066)
-        eta_min: 1.0e-5  # Minimum learning rate
+      # Warmup + Cosine Learning Rate Schedule (supported method)
+      use_warmup_cosine_lr_schedule: True
+      lr_schedule_warmup_percent: 0.1  # 10% warmup phase
+      lr_schedule_eta_min: 1.0e-5  # Minimum learning rate (now supported)
 
       reward_window_size: 50
       use_normalized_advantage: False

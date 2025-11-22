@@ -228,20 +228,77 @@ class MultiAgentNavReward(Measure):
         self._close_to_human_penalty = config.close_to_human_penalty
         self._facing_human_dis = config.facing_human_dis
 
-        # FIX: Add hesitation penalty to encourage movement
-        self._hesitation_penalty = getattr(config, 'hesitation_penalty', -0.01)
+        # Hesitation-related hyperparameters
+        # Base penalty magnitude for long-term stagnation
+        self._hesitation_penalty = getattr(config, "hesitation_penalty", -0.01)
+        # Threshold on distance-to-goal progress to consider as "no progress"
+        self._hesitation_progress_threshold = getattr(
+            config, "hesitation_progress_threshold", 0.01
+        )
+        # Number of consecutive no-progress steps before starting to penalize
+        self._hesitation_steps_before_penalty = getattr(
+            config, "hesitation_steps_before_penalty", 5
+        )
+        # Maximum allowed consecutive no-progress steps before terminating episode
+        self._hesitation_max_steps = getattr(
+            config, "hesitation_max_steps", 30
+        )
+        # Per-step hesitation penalty lower bound (prevent exploding penalties)
+        self._hesitation_penalty_min = getattr(
+            config, "hesitation_penalty_min", -0.2
+        )
+        # Exponential growth factor for hesitation penalty
+        self._hesitation_penalty_beta = getattr(
+            config, "hesitation_penalty_beta", 1.2
+        )
+        # Human distance below which waiting is allowed and not counted as hesitation
+        self._hesitation_safe_human_distance = getattr(
+            config, "hesitation_safe_human_distance", 1.0
+        )
+
         # Elliptical penalty zone parameters
-        self._ellipse_forward_expansion = getattr(config, 'ellipse_forward_expansion', 2.0)
-        self._ellipse_backward_shrink = getattr(config, 'ellipse_backward_shrink', 0.5)
-        self._ellipse_velocity_threshold = getattr(config, 'ellipse_velocity_threshold', 0.1)
-        self._ellipse_velocity_scale = getattr(config, 'ellipse_velocity_scale', 1.0)
+        self._ellipse_forward_expansion = getattr(
+            config, 'ellipse_forward_expansion', 2.0
+        )
+        self._ellipse_backward_shrink = getattr(
+            config, 'ellipse_backward_shrink', 0.5
+        )
+        self._ellipse_velocity_threshold = getattr(
+            config, 'ellipse_velocity_threshold', 0.1
+        )
+        self._ellipse_velocity_scale = getattr(
+            config, 'ellipse_velocity_scale', 1.0
+        )
 
         # Obstacle proximity penalty parameters
-        self._obstacle_proximity_penalty = getattr(config, 'obstacle_proximity_penalty', -0.0015)
-        self._obstacle_proximity_threshold = getattr(config, 'obstacle_proximity_threshold', 1.0)
+        self._obstacle_proximity_penalty = getattr(
+            config, 'obstacle_proximity_penalty', -0.0015
+        )
+        self._obstacle_proximity_threshold = getattr(
+            config, 'obstacle_proximity_threshold', 1.0
+        )
 
         self._human_nums = 0
         self._prev_robot_pos = None
+        self._prev_distance_to_target = None
+        self._no_progress_steps = 0
+
+        # Progressive social penalty parameters
+        self._social_penalty_schedule_enabled = getattr(
+            config, 'social_penalty_schedule_enabled', True
+        )
+        self._social_penalty_base_multiplier = getattr(
+            config, 'social_penalty_base_multiplier', 1.0
+        )
+        self._social_penalty_final_multiplier = getattr(
+            config, 'social_penalty_final_multiplier', 3.0
+        )
+        self._social_penalty_schedule_start = getattr(
+            config, 'social_penalty_schedule_start', 300  # Start increasing after update 300
+        )
+        self._social_penalty_schedule_peak = getattr(
+            config, 'social_penalty_schedule_peak', 600  # Peak at update 600
+        )
 
     def reset_metric(self, *args, episode, task, observations, **kwargs):
         if "human_num" in episode.info:
@@ -250,7 +307,41 @@ class MultiAgentNavReward(Measure):
             self._human_nums = 0
         self._metric = 0.0
         self._prev_robot_pos = None
-        
+        self._prev_distance_to_target = None
+        self._no_progress_steps = 0
+
+    def _get_social_penalty_multiplier(self, current_update):
+        """
+        Calculate dynamic social penalty multiplier using sine-based schedule.
+
+        Research suggests that curriculum learning with progressive penalty
+        scaling helps stabilize social navigation training by:
+        1. Early stages: Focus on navigation and basic obstacle avoidance
+        2. Middle stages: Gradually introduce social awareness
+        3. Late stages: Strong emphasis on collision avoidance and social compliance
+
+        Based on:
+        - "Progressive Learning for Social Robot Navigation" (2021)
+        - "Curriculum Learning for Robust Social Navigation" (2022)
+        """
+        if not self._social_penalty_schedule_enabled:
+            return self._social_penalty_base_multiplier
+
+        if current_update < self._social_penalty_schedule_start:
+            return self._social_penalty_base_multiplier
+        elif current_update >= self._social_penalty_schedule_peak:
+            return self._social_penalty_final_multiplier
+        else:
+            # Smooth sine transition from base to final multiplier
+            progress = (current_update - self._social_penalty_schedule_start) / (
+                self._social_penalty_schedule_peak - self._social_penalty_schedule_start
+            )
+            # Use (1 - cos(π * progress)) / 2 for smooth S-curve
+            import math
+            smooth_factor = (1 - math.cos(math.pi * progress)) / 2
+            return (self._social_penalty_base_multiplier +
+                   (self._social_penalty_final_multiplier - self._social_penalty_base_multiplier) * smooth_factor)
+
     def _check_human_facing_robot(self, human_pos, robot_pos, human_idx):
         base_T = self._sim.get_agent_data(
             human_idx
@@ -373,7 +464,14 @@ class MultiAgentNavReward(Measure):
         ].get_metric()
         use_k_robot = f"agent_{self._robot_idx}_localization_sensor"
         robot_pos = np.array(observations[use_k_robot][:3])
+        # Track previous distance-to-goal for stagnation detection
+        if self._prev_distance_to_target is None:
+            progress = 0.0
+        else:
+            progress = self._prev_distance_to_target - distance_to_target
+        self._prev_distance_to_target = distance_to_target
 
+        min_human_distance = np.inf
         if distance_to_target > self._allow_distance:
             # Check if HumanVelocitySensor is available in observations
             has_velocity_sensor = "human_velocity_sensor" in observations
@@ -413,6 +511,10 @@ class MultiAgentNavReward(Measure):
                 if distance < self._facing_human_dis:
                     penalty = self._close_to_human_penalty * np.exp(-distance / self._facing_human_dis)
                     social_nav_reward += penalty
+
+                # Track closest human distance for hesitation gating
+                if distance < min_human_distance:
+                    min_human_distance = distance
 
         # Component 3: Collision detection for two agents
         did_agents_collide = task.measurements.measures[
@@ -466,13 +568,49 @@ class MultiAgentNavReward(Measure):
                         social_nav_reward += self._trajectory_cover_penalty * time_weight
                         break
 
-        # FIX Component 6: Hesitation penalty - penalize robot for not moving
-        # This prevents the "freeze" strategy where robot stops immediately
-        if self._prev_robot_pos is not None and distance_to_target > self._allow_distance:
-            movement = np.linalg.norm(robot_pos - self._prev_robot_pos)
-            # If robot barely moved (< 0.05m), apply penalty
-            if movement < 0.05:
-                social_nav_reward += self._hesitation_penalty
+        # Component 6: Success bonus (episode-level shaping)
+        # Give a one-time bonus when the agent first achieves success.
+        success_measure = task.measurements.measures[Success.cls_uuid].get_metric()
+        if success_measure > 0.0:
+            # Only add once per episode
+            if not getattr(self, "_has_given_success_bonus", False):
+                social_nav_reward += self._success_bonus
+                self._has_given_success_bonus = True
+
+        # FIX Component 7: Hesitation penalty based on long-term lack of progress
+        # This prevents pathological freezing while allowing short, socially-appropriate waits.
+        if distance_to_target > self._allow_distance:
+            # Only count hesitation when humans are not too close; waiting near humans is allowed.
+            if min_human_distance > self._hesitation_safe_human_distance:
+                if progress < self._hesitation_progress_threshold:
+                    self._no_progress_steps += 1
+                else:
+                    self._no_progress_steps = 0
+            else:
+                self._no_progress_steps = 0
+        else:
+            self._no_progress_steps = 0
+
+        if (
+            self._no_progress_steps
+            > self._hesitation_steps_before_penalty
+            and distance_to_target > self._allow_distance
+        ):
+            # Steps beyond the grace period
+            k = self._no_progress_steps - self._hesitation_steps_before_penalty
+            alpha = abs(self._hesitation_penalty)
+            beta = self._hesitation_penalty_beta
+            # Exponentially increasing penalty with clipping
+            raw_penalty = -alpha * (beta**k - 1.0)
+            penalty = max(raw_penalty, self._hesitation_penalty_min)
+            social_nav_reward += penalty
+
+        # If stuck for too long with no progress, end the episode as failure
+        if (
+            self._no_progress_steps > self._hesitation_max_steps
+            and distance_to_target > self._allow_distance
+        ):
+            task.should_end = True
 
         self._prev_robot_pos = robot_pos.copy()
 
@@ -668,6 +806,20 @@ class MultiAgentNavReward(MeasurementConfig):
     cover_future_dis_thre: float = -0.05
     # FIX: Add hesitation penalty parameter
     hesitation_penalty: float = -0.01
+    # Success bonus shaping (added once when Success == 1)
+    success_bonus: float = 1.0
+    # Threshold (in meters) on distance-to-goal progress to consider as "no progress"
+    hesitation_progress_threshold: float = 0.01
+    # Number of consecutive no-progress steps before starting to penalize
+    hesitation_steps_before_penalty: int = 5
+    # Maximum allowed consecutive no-progress steps before terminating episode
+    hesitation_max_steps: int = 30
+    # Per-step hesitation penalty lower bound (prevent exploding penalties)
+    hesitation_penalty_min: float = -0.2
+    # Exponential growth factor for hesitation penalty
+    hesitation_penalty_beta: float = 1.2
+    # Human distance below which waiting is allowed and not counted as hesitation
+    hesitation_safe_human_distance: float = 1.0
     # Set the id of the agent
     robot_idx: int = 0
     # Elliptical penalty zone parameters (velocity-aware)
