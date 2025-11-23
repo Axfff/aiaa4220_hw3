@@ -24,17 +24,17 @@
 #    - Default: penalty=-0.0015, threshold=1.0m (from falcon_task_detail.yaml)
 #    - Provides smooth gradient for learning safe navigation near obstacles
 #
-# 3. Transformer + MDN Architecture (replaces BiLSTM in trajectory prediction)
+# 3. Transformer + MDN Architecture (hardcoded defaults, not configurable)
 #    - Transformer Encoder (2 layers, 8 heads): Global receptive field for interaction patterns
 #    - Mixture Density Network: Outputs GMM distribution (K=5 components) for multi-modal prediction
 #    - NLL Loss: Captures uncertainty → Shared backbone learns uncertainty-aware features
 #    - Gradient Flow: Robot's latent encodes "Human could move to Y or Z" (not just "is at X")
 #    - **REMOVED by process_ckp_for_eval.py - does NOT affect eval compatibility**
 #
-# 4. Two-Phase Curriculum Training (prevents gradient shock)
-#    - Phase 1 (Warm-Start, 0-100k steps): Freeze backbone, train Transformer-MDN with high LR
-#    - Phase 2 (Joint Finetuning, 100k+ steps): Unfreeze backbone, balanced gradient magnitudes
-#    - Prevents untrained Transformer from disrupting pretrained ResNet+LSTM weights
+# 4. Two-Phase Curriculum Training (NOT ENABLED - would require code modification)
+#    - Default: use_curriculum=False (hardcoded, not configurable via YAML)
+#    - If enabled in code: Phase 1 (Warm-Start), Phase 2 (Joint Finetuning)
+#    - Note: Config parameters not in AuxLossConfig dataclass
 #
 # 5. Action Smoothness Loss (enabled by default in code)
 #    - Regularizes policy to maintain consistent action distributions
@@ -263,14 +263,11 @@ habitat_baselines:
         future_step: 4
         loss_scale: 0.1
 
-        # Transformer + MDN architecture parameters
-        # These will be REMOVED by process_ckp_for_eval.py
-        num_mixture_components: 5  # K Gaussian components for multi-modal prediction
-        transformer_layers: 2      # Number of Transformer Encoder layers
-        transformer_heads: 8       # Number of attention heads
-
-        # Two-Phase Curriculum Training parameters
-        use_curriculum: True                    # Enable two-phase curriculum
-        warmstart_steps: 200000                 # Phase 1: 0-200k steps (freeze backbone)
-        warmstart_aux_lr_multiplier: 5.0        # Phase 1: High LR for Transformer-MDN (5x base)
-        finetune_loss_weight_normalize: True    # Phase 2: Normalize gradient magnitudes
+        # NOTE: Transformer-MDN parameters are hardcoded in auxiliary_tasks.py
+        # Not configurable via YAML (not in AuxLossConfig dataclass):
+        #   - num_mixture_components: 5 (default)
+        #   - transformer_layers: 2 (default)
+        #   - transformer_heads: 8 (default)
+        #   - use_curriculum: False (default, set to True in code if needed)
+        #   - warmstart_steps: 100000 (default)
+        # These modules will be REMOVED by process_ckp_for_eval.py
