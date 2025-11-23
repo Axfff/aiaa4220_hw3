@@ -226,7 +226,19 @@ print("✓ Checkpoint is eval-safe!")
 ## Troubleshooting
 
 ### Error: KeyError: 'human_velocity_sensor'
-**Solution:** Add `human_velocity_sensor` to eval config's `obs_keys`
+**Cause:** The sensor is listed in `obs_keys` but not registered in the task's `lab_sensors` defaults.
+
+**Solution:** Add `human_velocity_sensor` to the task config's lab_sensors list:
+```yaml
+# In Falcon/habitat-lab/habitat/config/habitat/task/falcon_task_detail.yaml
+defaults:
+  - lab_sensors:
+    - localization_sensor
+    - human_num_sensor
+    - oracle_humanoid_future_trajectory
+    - human_velocity_sensor  # Add this line
+```
+This fix is already included in the eval-safe branch.
 
 ### Error: RuntimeError: size mismatch for 'net.visual_encoder...'
 **Solution:** Checkpoint was trained with `dual_stream_fpn`, not compatible with eval code
