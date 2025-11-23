@@ -30,10 +30,10 @@
 #    - Gradient Flow: Robot's latent encodes "Human could move to Y or Z" (not just "is at X")
 #    - **REMOVED by process_ckp_for_eval.py - does NOT affect eval compatibility**
 #
-# 4. Two-Phase Curriculum Training (NOT ENABLED - would require code modification)
-#    - Default: use_curriculum=False (hardcoded, not configurable via YAML)
-#    - If enabled in code: Phase 1 (Warm-Start), Phase 2 (Joint Finetuning)
-#    - Note: Config parameters not in AuxLossConfig dataclass
+# 4. Two-Phase Curriculum Training (ENABLED via YAML config)
+#    - Phase 1 (0-100k steps): Freeze backbone (ResNet50+LSTM512), train Transformer-MDN only
+#    - Phase 2 (100k+ steps): Unfreeze backbone, joint training with normalized gradients
+#    - Configured via future_trajectory_prediction.use_curriculum=true
 #
 # 5. Action Smoothness Loss (enabled by default in code)
 #    - Regularizes policy to maintain consistent action distributions
@@ -164,7 +164,7 @@ habitat_baselines:
 
   checkpoint_folder: "evaluation/falcon/evalsafe_hm3d_2v100/checkpoints"
   num_updates: -1
-  total_num_steps: 1200000  # 1.2M steps for full two-phase curriculum
+  total_num_steps: 1600000  # 1.2M steps for full two-phase curriculum
   log_interval: 10
   num_checkpoints: 20
 
@@ -262,11 +262,15 @@ habitat_baselines:
         future_step: 4
         loss_scale: 0.1
 
-        # NOTE: Transformer-MDN parameters are hardcoded in auxiliary_tasks.py
-        # Not configurable via YAML (not in AuxLossConfig dataclass):
-        #   - num_mixture_components: 5 (default)
-        #   - transformer_layers: 2 (default)
-        #   - transformer_heads: 8 (default)
-        #   - use_curriculum: False (default, set to True in code if needed)
-        #   - warmstart_steps: 100000 (default)
+        # Transformer-MDN Architecture parameters
+        num_mixture_components: 5
+        transformer_layers: 2
+        transformer_heads: 8
+
+        # Two-Phase Curriculum Training (ENABLED)
+        use_curriculum: true
+        warmstart_steps: 160000  # Phase 1: 0-100k steps (freeze backbone, train Transformer-MDN only)
+        warmstart_aux_lr_multiplier: 5.0  # Phase 1: 5x higher loss scale for faster convergence
+        finetune_loss_weight_normalize: true  # Phase 2: 100k+ steps (joint training with normalized gradients)
+
         # These modules will be REMOVED by process_ckp_for_eval.py

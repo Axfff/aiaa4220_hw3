@@ -154,6 +154,56 @@ class FalconTrainer(BaseRLTrainer):
             **kwargs,
         )
 
+    def _freeze_backbone(self, freeze: bool):
+        """
+        Freeze or unfreeze the main policy backbone for two-phase curriculum training.
+
+        Args:
+            freeze: If True, freeze backbone parameters (Phase 1: Warm-Start)
+                   If False, unfreeze backbone parameters (Phase 2: Joint Finetuning)
+        """
+        try:
+            # Access the policy network
+            if hasattr(self._agent, 'actor_critic'):
+                policy = self._agent.actor_critic
+            elif hasattr(self._agent, '_agent_pool'):
+                # MultiAgentAccessMgr case
+                policy = self._agent._agent_pool[0].actor_critic
+            else:
+                logger.warning("[CURRICULUM] Could not access policy network")
+                return
+
+            # Freeze/unfreeze visual encoder (ResNet backbone)
+            if hasattr(policy, 'net') and hasattr(policy.net, 'visual_encoder'):
+                for param in policy.net.visual_encoder.parameters():
+                    param.requires_grad = not freeze
+
+            # Freeze/unfreeze state encoder (LSTM)
+            if hasattr(policy, 'net') and hasattr(policy.net, 'state_encoder'):
+                for param in policy.net.state_encoder.parameters():
+                    param.requires_grad = not freeze
+
+            # Freeze/unfreeze action distribution and critic heads
+            if hasattr(policy, 'action_distribution'):
+                for param in policy.action_distribution.parameters():
+                    param.requires_grad = not freeze
+
+            if hasattr(policy, 'critic'):
+                for param in policy.critic.parameters():
+                    param.requires_grad = not freeze
+
+            # Auxiliary modules are always trainable (we want to train Transformer-MDN in Phase 1)
+            if hasattr(policy, 'aux_loss_modules'):
+                for module in policy.aux_loss_modules.values():
+                    for param in module.parameters():
+                        param.requires_grad = True
+
+            status = "FROZEN" if freeze else "UNFROZEN"
+            logger.info(f"[CURRICULUM] Backbone parameters {status}")
+
+        except Exception as e:
+            logger.warning(f"[CURRICULUM] Error freezing/unfreezing backbone: {e}")
+
     def _init_envs(self, config=None, is_eval: bool = False):
         if config is None:
             config = self.config
@@ -278,6 +328,23 @@ class FalconTrainer(BaseRLTrainer):
         if self._is_distributed:
             self._agent.init_distributed(find_unused_params=True)  # type: ignore # FIXED: Allow unused params (human_velocity_sensor disabled)
         self._agent.post_init()
+
+        # Two-Phase Curriculum Training: Initialize state
+        self._curriculum_config = None
+        self._curriculum_phase_1_active = False
+        aux_cfg = self.config.habitat_baselines.rl.get("auxiliary_losses", None)
+        if aux_cfg and "future_trajectory_prediction" in aux_cfg:
+            traj_cfg = aux_cfg["future_trajectory_prediction"]
+            if traj_cfg.get("use_curriculum", False):
+                self._curriculum_config = {
+                    "warmstart_steps": traj_cfg.get("warmstart_steps", 100000),
+                    "use_curriculum": True,
+                }
+                # Phase 1: Freeze backbone, train Transformer-MDN only
+                self._freeze_backbone(freeze=True)
+                self._curriculum_phase_1_active = True
+                logger.info("[CURRICULUM] Phase 1 (Warm-Start): Backbone FROZEN, training Transformer-MDN only")
+                logger.info(f"[CURRICULUM] Phase 1 will last until step {self._curriculum_config['warmstart_steps']}")
 
         self._is_static_encoder = (
             not self.config.habitat_baselines.rl.ddppo.train_encoder
@@ -531,6 +598,34 @@ class FalconTrainer(BaseRLTrainer):
     @profiling_wrapper.RangeContext("_update_agent")
     @g_timer.avg_time("trainer.update_agent")
     def _update_agent(self):
+        # Two-Phase Curriculum: Update step counter in auxiliary module
+        if self._curriculum_config:
+            try:
+                # Access the future_trajectory_prediction auxiliary module
+                if hasattr(self._agent, 'actor_critic'):
+                    aux_modules = self._agent.actor_critic.aux_loss_modules
+                elif hasattr(self._agent, '_agent_pool'):
+                    # MultiAgentAccessMgr case
+                    aux_modules = self._agent._agent_pool[0].actor_critic.aux_loss_modules
+                else:
+                    aux_modules = None
+
+                if aux_modules and "future_trajectory_prediction" in aux_modules:
+                    traj_module = aux_modules["future_trajectory_prediction"]
+                    if hasattr(traj_module, 'set_step'):
+                        traj_module.set_step(self.num_steps_done)
+
+                # Check if we need to transition from Phase 1 to Phase 2
+                if (self._curriculum_phase_1_active and
+                    self.num_steps_done >= self._curriculum_config['warmstart_steps']):
+                    # Transition to Phase 2: Unfreeze backbone, joint training
+                    self._freeze_backbone(freeze=False)
+                    self._curriculum_phase_1_active = False
+                    logger.info(f"[CURRICULUM] Phase 2 (Joint Finetuning) started at step {self.num_steps_done}")
+                    logger.info("[CURRICULUM] Backbone UNFROZEN, training all modules jointly")
+            except Exception as e:
+                logger.warning(f"[CURRICULUM] Error updating curriculum state: {e}")
+
         with inference_mode():
             step_batch = self._agent.rollouts.get_last_step()
             step_batch_lens = {
@@ -654,6 +749,102 @@ class FalconTrainer(BaseRLTrainer):
         except Exception:
             # Silently skip if LR scheduler not available
             pass
+
+        # Log curriculum training metrics
+        if self._curriculum_config:
+            try:
+                # Phase indicator (0 = Phase 1: Warm-Start, 1 = Phase 2: Joint Training)
+                curriculum_phase = 0 if self._curriculum_phase_1_active else 1
+                writer.add_scalar("curriculum/phase", curriculum_phase, self.num_steps_done)
+
+                # Frozen status (1 = frozen, 0 = unfrozen)
+                backbone_frozen = 1 if self._curriculum_phase_1_active else 0
+                writer.add_scalar("curriculum/backbone_frozen", backbone_frozen, self.num_steps_done)
+
+                # Progress through Phase 1 (0.0 to 1.0)
+                if self._curriculum_phase_1_active:
+                    phase1_progress = self.num_steps_done / self._curriculum_config['warmstart_steps']
+                    writer.add_scalar("curriculum/phase1_progress", phase1_progress, self.num_steps_done)
+
+                # Log auxiliary loss scale multiplier
+                if hasattr(self._agent, 'actor_critic'):
+                    policy = self._agent.actor_critic
+                elif hasattr(self._agent, '_agent_pool'):
+                    policy = self._agent._agent_pool[0].actor_critic
+                else:
+                    policy = None
+
+                if policy and hasattr(policy, 'aux_loss_modules'):
+                    if "future_trajectory_prediction" in policy.aux_loss_modules:
+                        traj_module = policy.aux_loss_modules["future_trajectory_prediction"]
+                        if hasattr(traj_module, 'get_curriculum_loss_scale'):
+                            current_loss_scale = traj_module.get_curriculum_loss_scale()
+                            base_loss_scale = traj_module.loss_scale
+                            multiplier = current_loss_scale / base_loss_scale if base_loss_scale > 0 else 1.0
+                            writer.add_scalar("curriculum/aux_loss_multiplier", multiplier, self.num_steps_done)
+
+                # Compute gradient norms for backbone vs auxiliary modules
+                if hasattr(self._agent, 'actor_critic'):
+                    policy = self._agent.actor_critic
+                elif hasattr(self._agent, '_agent_pool'):
+                    policy = self._agent._agent_pool[0].actor_critic
+                else:
+                    policy = None
+
+                if policy is not None:
+                    # Backbone gradient norm (visual encoder + state encoder + heads)
+                    backbone_grad_norm = 0.0
+                    backbone_param_count = 0
+                    if hasattr(policy, 'net'):
+                        for name, param in policy.net.named_parameters():
+                            if param.grad is not None:
+                                backbone_grad_norm += param.grad.norm().item() ** 2
+                                backbone_param_count += 1
+                    if hasattr(policy, 'action_distribution'):
+                        for param in policy.action_distribution.parameters():
+                            if param.grad is not None:
+                                backbone_grad_norm += param.grad.norm().item() ** 2
+                                backbone_param_count += 1
+                    if hasattr(policy, 'critic'):
+                        for param in policy.critic.parameters():
+                            if param.grad is not None:
+                                backbone_grad_norm += param.grad.norm().item() ** 2
+                                backbone_param_count += 1
+
+                    if backbone_param_count > 0:
+                        backbone_grad_norm = (backbone_grad_norm ** 0.5) / backbone_param_count
+                        writer.add_scalar("curriculum/backbone_grad_norm", backbone_grad_norm, self.num_steps_done)
+
+                    # Auxiliary modules gradient norm (Transformer-MDN, etc.)
+                    aux_grad_norm = 0.0
+                    aux_param_count = 0
+                    if hasattr(policy, 'aux_loss_modules'):
+                        for module in policy.aux_loss_modules.values():
+                            for param in module.parameters():
+                                if param.grad is not None:
+                                    aux_grad_norm += param.grad.norm().item() ** 2
+                                    aux_param_count += 1
+
+                    if aux_param_count > 0:
+                        aux_grad_norm = (aux_grad_norm ** 0.5) / aux_param_count
+                        writer.add_scalar("curriculum/auxiliary_grad_norm", aux_grad_norm, self.num_steps_done)
+
+                    # Log individual auxiliary loss gradient norms
+                    if hasattr(policy, 'aux_loss_modules'):
+                        for aux_name, aux_module in policy.aux_loss_modules.items():
+                            aux_module_grad_norm = 0.0
+                            aux_module_param_count = 0
+                            for param in aux_module.parameters():
+                                if param.grad is not None:
+                                    aux_module_grad_norm += param.grad.norm().item() ** 2
+                                    aux_module_param_count += 1
+                            if aux_module_param_count > 0:
+                                aux_module_grad_norm = (aux_module_grad_norm ** 0.5) / aux_module_param_count
+                                writer.add_scalar(f"curriculum/{aux_name}_grad_norm", aux_module_grad_norm, self.num_steps_done)
+
+            except Exception as e:
+                # Don't crash training if logging fails
+                logger.warning(f"[CURRICULUM] Error logging curriculum metrics: {e}")
 
         for timer_name, timer_val in g_timer.items():
             writer.add_scalar(
