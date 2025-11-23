@@ -33,10 +33,10 @@ An eval-safe configuration ensures that:
 
 **Features:**
 - ResNet50 + LSTM512 (eval-compatible)
-- Transformer-MDN trajectory prediction
-- Two-phase curriculum training
-- Elliptical proximity penalty
-- Action smoothness loss
+- Transformer-MDN trajectory prediction (hardcoded defaults)
+- Elliptical proximity penalty (velocity-aware)
+- Obstacle proximity penalty (depth-based)
+- Action smoothness loss (hardcoded to 0.01)
 - Mixed precision training (AMP)
 - Warmup + Cosine LR schedule
 - 16 parallel environments (8 per GPU)
@@ -132,8 +132,9 @@ python -m habitat-baselines.habitat_baselines.run \
 The eval-safe configs include all the latest improvements while maintaining compatibility:
 
 ### 1. Transformer-MDN Trajectory Prediction
-- **Architecture:** Transformer Encoder (2 layers, 8 heads) + Mixture Density Network
+- **Architecture:** Transformer Encoder (2 layers, 8 heads) + Mixture Density Network (5 components)
 - **Benefit:** Multi-modal prediction captures uncertainty in human trajectories
+- **Configuration:** Uses hardcoded defaults (not configurable via YAML)
 - **Compatibility:** Removed by `process_ckp_for_eval.py`, doesn't affect eval
 
 ### 2. Elliptical Proximity Penalty
@@ -141,10 +142,11 @@ The eval-safe configs include all the latest improvements while maintaining comp
 - **Benefit:** Penalty zone expands 2x in direction of movement, shrinks 0.5x behind
 - **Compatibility:** Requires `human_velocity_sensor` in both train and eval configs (included)
 
-### 3. Two-Phase Curriculum Training
-- **Phase 1 (0-100k steps):** Freeze backbone, train Transformer-MDN with high LR
-- **Phase 2 (100k+ steps):** Unfreeze backbone, balanced gradients
-- **Benefit:** Prevents untrained Transformer from disrupting pretrained ResNet weights
+### 3. Two-Phase Curriculum Training (NOT ENABLED)
+- **Status:** Disabled by default (`use_curriculum=False`)
+- **Why:** Config parameters not in AuxLossConfig dataclass, cannot be set via YAML
+- **To enable:** Would require code modification in `auxiliary_tasks.py`
+- **If enabled:** Phase 1 (freeze backbone), Phase 2 (joint finetuning)
 
 ### 4. Action Smoothness Loss
 - **What:** Regularizes policy to maintain consistent action distributions (hardcoded to 0.01)
