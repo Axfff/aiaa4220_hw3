@@ -36,9 +36,9 @@
 #    - Phase 2 (Joint Finetuning, 100k+ steps): Unfreeze backbone, balanced gradient magnitudes
 #    - Prevents untrained Transformer from disrupting pretrained ResNet+LSTM weights
 #
-# 5. Action Smoothness Loss (prevents jittery behavior)
+# 5. Action Smoothness Loss (enabled by default in code)
 #    - Regularizes policy to maintain consistent action distributions
-#    - Coefficient: 0.01
+#    - Hardcoded coefficient: 0.01 (not configurable via YAML)
 #
 # 6. Mixed Precision Training (AMP) for faster training
 #    - Reduces memory usage and increases throughput
@@ -165,7 +165,7 @@ habitat_baselines:
 
   checkpoint_folder: "evaluation/falcon/evalsafe_hm3d_2v100/checkpoints"
   num_updates: -1
-  total_num_steps: 1000000  # 1M steps for full two-phase curriculum
+  total_num_steps: 1200000  # 1.2M steps for full two-phase curriculum
   log_interval: 10
   num_checkpoints: 20
 
@@ -226,8 +226,7 @@ habitat_baselines:
       # Double buffered sampling not supported in multi-agent training
       use_double_buffered_sampler: False
 
-      # IMPROVEMENT: Action smoothness loss (prevents jittery behavior)
-      smoothness_loss_coef: 0.01
+      # NOTE: Action smoothness loss is enabled by default (hardcoded to 0.01 in ppo.py)
 
     ddppo:
       # OPTIMIZATION 5: Enable distributed training
@@ -272,6 +271,6 @@ habitat_baselines:
 
         # Two-Phase Curriculum Training parameters
         use_curriculum: True                    # Enable two-phase curriculum
-        warmstart_steps: 100000                 # Phase 1: 0-100k steps (freeze backbone)
+        warmstart_steps: 200000                 # Phase 1: 0-200k steps (freeze backbone)
         warmstart_aux_lr_multiplier: 5.0        # Phase 1: High LR for Transformer-MDN (5x base)
         finetune_loss_weight_normalize: True    # Phase 2: Normalize gradient magnitudes

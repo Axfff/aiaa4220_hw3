@@ -147,9 +147,10 @@ The eval-safe configs include all the latest improvements while maintaining comp
 - **Benefit:** Prevents untrained Transformer from disrupting pretrained ResNet weights
 
 ### 4. Action Smoothness Loss
-- **What:** Regularizes policy to maintain consistent action distributions
+- **What:** Regularizes policy to maintain consistent action distributions (hardcoded to 0.01)
 - **Benefit:** Reduces jittery behavior, smoother navigation
 - **Compatibility:** Training-only, doesn't affect checkpoint structure
+- **Note:** This is enabled by default in the code, not configurable via YAML
 
 ### 5. Warmup + Cosine LR Schedule
 - **What:** Linear warmup (10%), then cosine decay
