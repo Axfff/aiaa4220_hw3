@@ -5,3 +5,4 @@ submissions
 .idea
 .DS_Store
 claude.md
+Falcon/pretrained_model/pretrained_habitat3.pth
