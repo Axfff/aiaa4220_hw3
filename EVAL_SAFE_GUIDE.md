@@ -240,6 +240,30 @@ defaults:
 ```
 This fix is already included in the eval-safe branch.
 
+### Error: KeyError: 'human_velocity_measure'
+**Cause:** The `HumanVelocitySensor` depends on the `human_velocity_measure` measurement, but it's not registered in the task's measurements defaults.
+
+**Solution:** Add `human_velocity_measure` to the task config's measurements list:
+```yaml
+# In Falcon/habitat-lab/habitat/config/habitat/task/falcon_task_detail.yaml
+defaults:
+  - measurements:
+    - distance_to_goal
+    - distance_to_goal_reward
+    - multi_agent_nav_reward
+    - success
+    - did_multi_agents_collide
+    - num_steps
+    - top_down_map
+    - spl
+    - psc
+    - stl
+    - human_collision
+    - human_future_trajectory
+    - human_velocity_measure  # Add this line
+```
+This fix is already included in the eval-safe branch.
+
 ### Error: RuntimeError: size mismatch for 'net.visual_encoder...'
 **Solution:** Checkpoint was trained with `dual_stream_fpn`, not compatible with eval code
 
