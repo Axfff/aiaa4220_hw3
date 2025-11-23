@@ -18,7 +18,7 @@
 # OBSERVATION SPACE:
 # - agent_0_articulated_agent_jaw_depth: Visual observation (depth camera)
 # - agent_0_pointgoal_with_gps_compass: Navigation goal in robot frame
-# - human_velocity_sensor: Human velocities (required for elliptical proximity penalty)
+# - human_velocity_sensor: DISABLED (implementation issues, falls back to circular proximity penalty)
 #
 # NOTE: Auxiliary sensors (localization, human_num, future_trajectory) are NOT included
 # because they are only used during training for auxiliary loss calculations.
@@ -56,7 +56,7 @@ habitat:
       # - agent_0_articulated_agent_jaw_rgb  # NOT USED: RGB disabled for compatibility
       - agent_0_articulated_agent_jaw_depth   # CORE: Visual observation
       - agent_0_pointgoal_with_gps_compass    # CORE: Navigation goal
-      - human_velocity_sensor                 # CORE: Required for elliptical proximity penalty
+      # - human_velocity_sensor                 # DISABLED: Implementation issues, elliptical penalty disabled
 
       # === AUXILIARY SENSORS (NOT included in eval) ===
       # These sensors are only used during training for auxiliary loss calculations

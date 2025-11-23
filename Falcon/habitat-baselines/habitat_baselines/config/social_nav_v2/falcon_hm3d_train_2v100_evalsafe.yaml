@@ -12,11 +12,10 @@
 # - Use falcon_hm3d_evalsafe.yaml for evaluation
 #
 # KEY IMPROVEMENTS INCLUDED:
-# 1. Elliptical Proximity Penalty (velocity-aware for humans)
-#    - Requires human_velocity_sensor in obs_keys
-#    - Penalty zone expands 2x in direction of human movement
-#    - Penalty zone shrinks 0.5x behind moving humans (easier to follow)
-#    - Falls back to circular penalty for stationary humans
+# 1. Elliptical Proximity Penalty (DISABLED - human_velocity_sensor has implementation issues)
+#    - Would require human_velocity_sensor in obs_keys
+#    - Falls back to standard circular proximity penalty
+#    - Parameters still configured in falcon_task_detail.yaml (for future use)
 #
 # 2. Obstacle Proximity Penalty (depth-based for static obstacles)
 #    - Uses agent_0_articulated_agent_jaw_depth sensor
@@ -89,7 +88,7 @@ habitat:
       # - agent_0_articulated_agent_jaw_rgb  # NOT USED: Keep RGB disabled for compatibility
       - agent_0_articulated_agent_jaw_depth   # CORE: Visual observation
       - agent_0_pointgoal_with_gps_compass    # CORE: Navigation goal
-      - human_velocity_sensor                 # CORE: Required for elliptical proximity penalty
+      # - human_velocity_sensor                 # DISABLED: Implementation issues, elliptical penalty disabled
 
       # === AUXILIARY SENSORS (training only, removed during eval) ===
       - agent_0_localization_sensor           # AUX: For auxiliary loss calculations
