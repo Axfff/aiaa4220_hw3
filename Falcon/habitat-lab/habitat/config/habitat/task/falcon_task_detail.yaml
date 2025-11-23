@@ -14,9 +14,10 @@ defaults:
     - human_collision
     - human_future_trajectory # for falcon
   - lab_sensors:
-    - localization_sensor 
+    - localization_sensor
     - human_num_sensor # for falcon
     - oracle_humanoid_future_trajectory # for falcon
+    - human_velocity_sensor # for falcon (required for elliptical proximity penalty)
   - _self_
 
 type: MultiAgentPointNavTask-v0
