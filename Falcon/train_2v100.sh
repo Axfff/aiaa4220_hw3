@@ -52,7 +52,7 @@ torchrun \
     --nproc_per_node=2 \
     --master_port=$MASTER_PORT \
     -m habitat_baselines.run \
-    --config-name=social_nav_v2/falcon_hm3d_train_2v100_ellipse.yaml
+    --config-name=social_nav_v2/falcon_hm3d_train_2v100_evalsafe.yaml
 
 echo ""
 echo "=========================================="
