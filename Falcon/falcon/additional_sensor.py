@@ -170,10 +170,11 @@ class HumanVelocitySensor(UsesArticulatedAgentInterface, Sensor):
 
     cls_uuid = "human_velocity_sensor"
 
-    def __init__(self, sim, config, *args, **kwargs):
-        super().__init__(config=config)
+    def __init__(self, *args, sim, task, config, **kwargs):
         self._sim = sim
+        self._task = task
         self.value = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]] * 6, dtype=np.float64)
+        super().__init__(config=config, *args, **kwargs)
 
     def _get_uuid(self, *args, **kwargs):
         return HumanVelocitySensor.cls_uuid
@@ -190,12 +191,12 @@ class HumanVelocitySensor(UsesArticulatedAgentInterface, Sensor):
         )
 
     def get_observation(self, observations, episode, *args, **kwargs):
-        # human_num = kwargs["task"]._human_num
+        # human_num = self._task._human_num
         for i in range(self._sim.num_articulated_agents-1):
             articulated_agent = self._sim.get_agent_data(i+1).articulated_agent
             human_pos = np.array(articulated_agent.base_pos, dtype=np.float64)
             human_rot = np.array([float(articulated_agent.base_rot)], dtype=np.float64)
-            human_vel = np.array(kwargs['task'].measurements.measures['human_velocity_measure']._metric[i],dtype=np.float64)
+            human_vel = np.array(self._task.measurements.measures['human_velocity_measure']._metric[i],dtype=np.float64)
             self.value[i] = np.concatenate((human_pos, human_rot, human_vel))
         return self.value
     
