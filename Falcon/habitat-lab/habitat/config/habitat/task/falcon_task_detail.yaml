@@ -4,15 +4,16 @@ defaults:
     - distance_to_goal
     - distance_to_goal_reward
     - multi_agent_nav_reward # for falcon
-    - success 
-    - did_multi_agents_collide 
-    - num_steps 
+    - success
+    - did_multi_agents_collide
+    - num_steps
     - top_down_map
     - spl
     - psc
     - stl
     - human_collision
     - human_future_trajectory # for falcon
+    - human_velocity_measure # for falcon (required by human_velocity_sensor)
   - lab_sensors:
     - localization_sensor
     - human_num_sensor # for falcon
