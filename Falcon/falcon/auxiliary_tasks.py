@@ -374,8 +374,10 @@ class FutureTrajectoryPrediction(nn.Module):
         mu = mdn_params[..., 1:1+self.position_dim]  # (batch_size, max_human_num, future_step, K, 2)
 
         # σ (standard deviations): Apply softplus to ensure positivity
+        # Use a larger minimum sigma (2.0m) to allow the model to "cover" large initial prediction errors
+        # This prevents NLL from exploding when μ is far from ground truth during early training
         sigma_raw = mdn_params[..., 1+self.position_dim:]  # (batch_size, max_human_num, future_step, K, 2)
-        sigma = F.softplus(sigma_raw) + 1e-6  # Add epsilon for numerical stability
+        sigma = F.softplus(sigma_raw) + 2.0  # Minimum sigma of 2 meters for stable learning
 
         # Get ground truth positions (relative to robot)
         positions_gt = batch["observations"]["oracle_humanoid_future_trajectory"][:, :, -self.future_step:, :]  # (batch_size, num_people, future_step, position_dim)
@@ -401,7 +403,9 @@ class FutureTrajectoryPrediction(nn.Module):
         # Phase 1: loss_scale * warmstart_aux_lr_multiplier (compensates for low LR during warmup)
         # Phase 2: loss_scale (normal weight for balanced joint training)
         curriculum_loss_scale = self.get_curriculum_loss_scale()
-        final_loss = torch.clamp(loss, max=2.0) * curriculum_loss_scale
+        # Clamp at 10.0 (was 2.0) to allow the loss to reflect actual learning progress
+        # With minimum sigma=2.0m, the NLL should be in a reasonable range now
+        final_loss = torch.clamp(loss, max=10.0) * curriculum_loss_scale
 
         return dict(loss=final_loss)
 

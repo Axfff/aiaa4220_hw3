@@ -92,7 +92,9 @@ class PPO(nn.Module, Updater):
         self.value_loss_coef = value_loss_coef
         self.entropy_coef = entropy_coef
         self.aux_loss_coef = aux_loss_coef   ## added
-        self.smoothness_loss_coef = 0.01  # Weight for action smoothness loss
+        # DISABLED: Action smoothness loss prevents reactive stopping for humans
+        # Set to 0.0 to allow the robot to quickly switch to "stop" when needed
+        self.smoothness_loss_coef = 0.0  # Was 0.01, disabled for better waiting behavior
         self.max_grad_norm = max_grad_norm
         self.use_clipped_value_loss = use_clipped_value_loss
 

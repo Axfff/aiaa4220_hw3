@@ -252,8 +252,9 @@ class MultiAgentNavReward(Measure):
             config, "hesitation_penalty_beta", 1.2
         )
         # Human distance below which waiting is allowed and not counted as hesitation
+        # Increased from 1.0m to 2.5m to allow waiting when humans cross the path
         self._hesitation_safe_human_distance = getattr(
-            config, "hesitation_safe_human_distance", 1.0
+            config, "hesitation_safe_human_distance", 2.5
         )
 
         # Elliptical penalty zone parameters
@@ -819,7 +820,8 @@ class MultiAgentNavReward(MeasurementConfig):
     # Exponential growth factor for hesitation penalty
     hesitation_penalty_beta: float = 1.2
     # Human distance below which waiting is allowed and not counted as hesitation
-    hesitation_safe_human_distance: float = 1.0
+    # Increased from 1.0m to 2.5m to allow waiting when humans cross the path
+    hesitation_safe_human_distance: float = 2.5
     # Set the id of the agent
     robot_idx: int = 0
     # Elliptical penalty zone parameters (velocity-aware)
