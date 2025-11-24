@@ -729,6 +729,11 @@ class FalconTrainer(BaseRLTrainer):
         for k, v in self._single_proc_infos.items():
             writer.add_scalar(k, np.mean(v), self.num_steps_done)
 
+        # Log best model tracking
+        if hasattr(self, '_best_success_rate') and self._best_success_rate >= 0:
+            writer.add_scalar("best/success_rate", self._best_success_rate, self.num_steps_done)
+            writer.add_scalar("best/step", self._best_success_step, self.num_steps_done)
+
         fps = self.num_steps_done / ((time.time() - self.t_start) + prev_time)
 
         # Log perf metrics.
@@ -915,6 +920,10 @@ class FalconTrainer(BaseRLTrainer):
         count_checkpoints = 0
         prev_time = 0
 
+        # Best model tracking for saving at local maximum success rate
+        self._best_success_rate = -1.0
+        self._best_success_step = 0
+
         if self._is_distributed:
             torch.distributed.barrier()
 
@@ -930,6 +939,9 @@ class FalconTrainer(BaseRLTrainer):
             ]
             count_checkpoints = requeue_stats["count_checkpoints"]
             prev_time = requeue_stats["prev_time"]
+            # Restore best model tracking
+            self._best_success_rate = requeue_stats.get("best_success_rate", -1.0)
+            self._best_success_step = requeue_stats.get("best_success_step", 0)
 
             self.running_episode_stats = requeue_stats["running_episode_stats"]
             self.window_episode_stats.update(
@@ -963,6 +975,8 @@ class FalconTrainer(BaseRLTrainer):
                         running_episode_stats=self.running_episode_stats,
                         window_episode_stats=dict(self.window_episode_stats),
                         run_id=writer.get_run_id(),
+                        best_success_rate=self._best_success_rate,
+                        best_success_step=self._best_success_step,
                     )
 
                     save_resume_state(
@@ -1034,17 +1048,51 @@ class FalconTrainer(BaseRLTrainer):
 
                 self._training_log(writer, losses, prev_time)
 
-                # checkpoint model
+                # checkpoint model with step-based naming (ckpt.{step_in_k}k.pth)
                 if rank0_only() and self.should_checkpoint():
+                    step_in_k = self.num_steps_done // 1000
+                    ckpt_name = f"ckpt.{step_in_k}k.pth"
                     self.save_checkpoint(
-                        f"ckpt.{count_checkpoints}.pth",
+                        ckpt_name,
                         dict(
                             step=self.num_steps_done,
                             wall_time=(time.time() - self.t_start) + prev_time,
                         ),
                     )
-                    print(f'PPO save to ckpt.{count_checkpoints}.pth ')
+                    logger.info(f'[CHECKPOINT] Saved {ckpt_name} at step {self.num_steps_done}')
                     count_checkpoints += 1
+
+                # Save best model at local maximum success rate
+                if rank0_only():
+                    try:
+                        # Get current success rate from window stats
+                        if "success" in self.window_episode_stats and len(self.window_episode_stats["success"]) > 0:
+                            success_stats = self.window_episode_stats["success"]
+                            count_stats = self.window_episode_stats.get("count", [])
+                            if len(count_stats) > 0:
+                                # Compute average success rate over window
+                                total_success = sum(s.sum().item() for s in success_stats)
+                                total_count = sum(c.sum().item() for c in count_stats)
+                                if total_count > 0:
+                                    current_success_rate = total_success / total_count
+
+                                    # Save if this is a new best
+                                    if current_success_rate > self._best_success_rate:
+                                        self._best_success_rate = current_success_rate
+                                        self._best_success_step = self.num_steps_done
+
+                                        self.save_checkpoint(
+                                            "ckpt.best.pth",
+                                            dict(
+                                                step=self.num_steps_done,
+                                                wall_time=(time.time() - self.t_start) + prev_time,
+                                                success_rate=current_success_rate,
+                                            ),
+                                        )
+                                        logger.info(f'[BEST MODEL] New best success rate: {current_success_rate:.4f} at step {self.num_steps_done}')
+                    except Exception as e:
+                        # Don't crash training if best model tracking fails
+                        pass
 
                 profiling_wrapper.range_pop()  # train update
 
