@@ -334,7 +334,17 @@ class AuxLossConfig(HabitatBaselinesBaseConfig):
     position_dim: int = 2
     loss_scale: float = 0.1
     future_step: int = 4
-    # pass
+
+    # Transformer-MDN Architecture parameters
+    num_mixture_components: int = 5
+    transformer_layers: int = 2
+    transformer_heads: int = 8
+
+    # Two-Phase Curriculum Training parameters
+    use_curriculum: bool = False
+    warmstart_steps: int = 100000
+    warmstart_aux_lr_multiplier: float = 5.0
+    finetune_loss_weight_normalize: bool = True
 
 
 @dataclass
