@@ -602,13 +602,16 @@ class FalconTrainer(BaseRLTrainer):
         if self._curriculum_config:
             try:
                 # Access the future_trajectory_prediction auxiliary module
+                aux_modules = None
                 if hasattr(self._agent, 'actor_critic'):
-                    aux_modules = self._agent.actor_critic.aux_loss_modules
+                    policy = self._agent.actor_critic
+                    if hasattr(policy, 'aux_loss_modules'):
+                        aux_modules = policy.aux_loss_modules
                 elif hasattr(self._agent, '_agent_pool'):
                     # MultiAgentAccessMgr case
-                    aux_modules = self._agent._agent_pool[0].actor_critic.aux_loss_modules
-                else:
-                    aux_modules = None
+                    policy = self._agent._agent_pool[0].actor_critic
+                    if hasattr(policy, 'aux_loss_modules'):
+                        aux_modules = policy.aux_loss_modules
 
                 if aux_modules and "future_trajectory_prediction" in aux_modules:
                     traj_module = aux_modules["future_trajectory_prediction"]
