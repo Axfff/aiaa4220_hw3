@@ -56,6 +56,14 @@ class PeopleCounting(nn.Module):
         position_dim: int = 2,
         loss_scale: float = 0.1,
         future_step: int = 4,
+        # Accept but ignore Transformer-MDN and curriculum parameters (only used by FutureTrajectoryPrediction)
+        num_mixture_components: int = 5,
+        transformer_layers: int = 2,
+        transformer_heads: int = 8,
+        use_curriculum: bool = False,
+        warmstart_steps: int = 100000,
+        warmstart_aux_lr_multiplier: float = 5.0,
+        finetune_loss_weight_normalize: bool = True,
     ):
         super().__init__()
         self.max_human_num = max_human_num
@@ -117,6 +125,14 @@ class GuessHumanPosition(nn.Module):
         position_dim: int = 2,
         loss_scale: float = 0.1,
         future_step: int = 4,
+        # Accept but ignore Transformer-MDN and curriculum parameters (only used by FutureTrajectoryPrediction)
+        num_mixture_components: int = 5,
+        transformer_layers: int = 2,
+        transformer_heads: int = 8,
+        use_curriculum: bool = False,
+        warmstart_steps: int = 100000,
+        warmstart_aux_lr_multiplier: float = 5.0,
+        finetune_loss_weight_normalize: bool = True,
     ):
         super().__init__()
         self.loss_scale = loss_scale
