@@ -381,8 +381,11 @@ class FutureTrajectoryPrediction(nn.Module):
             mask   # Valid human mask
         )
 
-        # FIX: Remove sigmoid, use direct loss with clamping
-        final_loss = torch.clamp(loss, max=2.0) * self.loss_scale
+        # Apply curriculum-aware loss scale
+        # Phase 1: loss_scale * warmstart_aux_lr_multiplier (compensates for low LR during warmup)
+        # Phase 2: loss_scale (normal weight for balanced joint training)
+        curriculum_loss_scale = self.get_curriculum_loss_scale()
+        final_loss = torch.clamp(loss, max=2.0) * curriculum_loss_scale
 
         return dict(loss=final_loss)
 

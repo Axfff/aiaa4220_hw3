@@ -1,0 +1,276 @@
+# @package _global_
+# EVAL-SAFE Config for 2x V100 (32GB each) with All Improvements
+# Main Policy: ResNet50 + LSTM512 (COMPATIBLE with original eval code from 5d8ec1d1cf)
+# Auxiliary: Transformer-MDN for Future Trajectory Prediction (removed by process_ckp_for_eval.py)
+# Expected VRAM usage: 22-30GB per GPU
+# Expected speedup: 4-6x faster than mini config
+# Expected GPU utilization: 75-95% per GPU
+#
+# EVAL COMPATIBILITY GUARANTEE:
+# - Main policy network architecture: ResNet50 + LSTM512 (same as commit 5d8ec1d1cf)
+# - After running process_ckp_for_eval.py, checkpoint is compatible with original eval code
+# - Use falcon_hm3d_evalsafe.yaml for evaluation
+#
+# KEY IMPROVEMENTS INCLUDED:
+# 1. Elliptical Proximity Penalty (DISABLED - human_velocity_sensor has implementation issues)
+#    - Would require human_velocity_sensor in obs_keys
+#    - Falls back to standard circular proximity penalty
+#    - Parameters still configured in falcon_task_detail.yaml (for future use)
+#
+# 2. Obstacle Proximity Penalty (depth-based for static obstacles)
+#    - Uses agent_0_articulated_agent_jaw_depth sensor
+#    - Soft penalty when approaching walls/obstacles within 1.0m
+#    - Default: penalty=-0.0015, threshold=1.0m (from falcon_task_detail.yaml)
+#    - Provides smooth gradient for learning safe navigation near obstacles
+#
+# 3. Transformer + MDN Architecture (hardcoded defaults, not configurable)
+#    - Transformer Encoder (2 layers, 8 heads): Global receptive field for interaction patterns
+#    - Mixture Density Network: Outputs GMM distribution (K=5 components) for multi-modal prediction
+#    - NLL Loss: Captures uncertainty → Shared backbone learns uncertainty-aware features
+#    - Gradient Flow: Robot's latent encodes "Human could move to Y or Z" (not just "is at X")
+#    - **REMOVED by process_ckp_for_eval.py - does NOT affect eval compatibility**
+#
+# 4. Two-Phase Curriculum Training (ENABLED via YAML config)
+#    - Phase 1 (0-100k steps): Freeze backbone (ResNet50+LSTM512), train Transformer-MDN only
+#    - Phase 2 (100k+ steps): Unfreeze backbone, joint training with normalized gradients
+#    - Configured via future_trajectory_prediction.use_curriculum=true
+#
+# 5. Action Smoothness Loss (enabled by default in code)
+#    - Regularizes policy to maintain consistent action distributions
+#    - Hardcoded coefficient: 0.01 (not configurable via YAML)
+#
+# 6. Mixed Precision Training (AMP) for faster training
+#    - Reduces memory usage and increases throughput
+#    - Automatic loss scaling for numerical stability
+#
+# 7. Warmup + Cosine LR Schedule
+#    - Linear warmup for 10% of training, then cosine decay
+#    - Reduces oscillation and improves convergence
+#
+# Optimizations for 2x V100:
+# 1. Parallel environments: 16 (8 per GPU)
+# 2. Multi-threading enabled
+# 3. Larger batch size (ppo_epoch=4, num_mini_batch=4)
+# 4. Full model backbone (ResNet50 + LSTM512)
+# 5. Distributed training enabled (DD-PPO)
+# 6. Higher learning rate (2.0e-4)
+# 7. Force distributed mode for multi-GPU
+
+defaults:
+  - /benchmark/nav/socialnav_v2: falcon_hm3d_task_for_train
+  - /habitat_baselines: habitat_baselines_rl_config_base
+  - /habitat/simulator/sim_sensors@habitat_baselines.eval.extra_sim_sensors.third_rgb_sensor: third_rgb_sensor
+  - /habitat_baselines/rl/policy@habitat_baselines.rl.policy.agent_1: single_fixed
+  - /habitat_baselines/rl/policy@habitat_baselines.rl.policy.agent_2: single_fixed
+  - /habitat_baselines/rl/policy@habitat_baselines.rl.policy.agent_3: single_fixed
+  - /habitat_baselines/rl/policy@habitat_baselines.rl.policy.agent_4: single_fixed
+  - /habitat_baselines/rl/policy@habitat_baselines.rl.policy.agent_5: single_fixed
+  - /habitat_baselines/rl/policy@habitat_baselines.rl.policy.agent_6: single_fixed
+  - /habitat/task/actions@habitat.task.actions.agent_0_discrete_stop: discrete_stop
+  - /habitat/task/actions@habitat.task.actions.agent_0_discrete_move_forward: discrete_move_forward
+  - /habitat/task/actions@habitat.task.actions.agent_0_discrete_turn_left: discrete_turn_left
+  - /habitat/task/actions@habitat.task.actions.agent_0_discrete_turn_right: discrete_turn_right
+  - /habitat/task/actions@habitat.task.actions.agent_1_oracle_nav_randcoord_action_obstacle: oracle_nav_action
+  - /habitat/task/actions@habitat.task.actions.agent_2_oracle_nav_randcoord_action_obstacle: oracle_nav_action
+  - /habitat/task/actions@habitat.task.actions.agent_3_oracle_nav_randcoord_action_obstacle: oracle_nav_action
+  - /habitat/task/actions@habitat.task.actions.agent_4_oracle_nav_randcoord_action_obstacle: oracle_nav_action
+  - /habitat/task/actions@habitat.task.actions.agent_5_oracle_nav_randcoord_action_obstacle: oracle_nav_action
+  - /habitat/task/actions@habitat.task.actions.agent_6_oracle_nav_randcoord_action_obstacle: oracle_nav_action
+  - /habitat/task/lab_sensors@habitat.task.lab_sensors.agent_0_pointgoal_with_gps_compass: pointgoal_with_gps_compass_sensor
+  - _self_
+
+habitat:
+  dataset:
+    split: train
+  gym:
+    obs_keys:
+      # === CORE SENSORS (required for eval compatibility) ===
+      # - agent_0_articulated_agent_jaw_rgb  # NOT USED: Keep RGB disabled for compatibility
+      - agent_0_articulated_agent_jaw_depth   # CORE: Visual observation
+      - agent_0_pointgoal_with_gps_compass    # CORE: Navigation goal
+      # - human_velocity_sensor                 # DISABLED: Implementation issues, elliptical penalty disabled
+
+      # === AUXILIARY SENSORS (training only, removed during eval) ===
+      - agent_0_localization_sensor           # AUX: For auxiliary loss calculations
+      - agent_0_human_num_sensor              # AUX: For people counting task
+      - agent_0_oracle_humanoid_future_trajectory  # AUX: For trajectory prediction task
+  task:
+    actions:
+      agent_0_discrete_stop:
+        lin_speed: 0.0
+        ang_speed: 0.0
+      agent_0_discrete_move_forward:
+        lin_speed: 25.0
+        ang_speed: 0.0
+        allow_dyn_slide: True
+      agent_0_discrete_turn_left:
+        lin_speed: 0.0
+        ang_speed: 10.0
+        allow_dyn_slide: True
+      agent_0_discrete_turn_right:
+        lin_speed: 0.0
+        ang_speed: -10.0
+        allow_dyn_slide: True
+      agent_1_oracle_nav_randcoord_action_obstacle:
+        type: OracleNavRandCoordAction_Obstacle
+        motion_control: human_joints
+        lin_speed: 10.0
+        ang_speed: 10.0
+        allow_dyn_slide: True
+      agent_2_oracle_nav_randcoord_action_obstacle:
+        type: OracleNavRandCoordAction_Obstacle
+        motion_control: human_joints
+        lin_speed: 10.0
+        ang_speed: 10.0
+        allow_dyn_slide: True
+      agent_3_oracle_nav_randcoord_action_obstacle:
+        type: OracleNavRandCoordAction_Obstacle
+        motion_control: human_joints
+        lin_speed: 10.0
+        ang_speed: 10.0
+        allow_dyn_slide: True
+      agent_4_oracle_nav_randcoord_action_obstacle:
+        type: OracleNavRandCoordAction_Obstacle
+        motion_control: human_joints
+        lin_speed: 10.0
+        ang_speed: 10.0
+        allow_dyn_slide: True
+      agent_5_oracle_nav_randcoord_action_obstacle:
+        type: OracleNavRandCoordAction_Obstacle
+        motion_control: human_joints
+        lin_speed: 10.0
+        ang_speed: 10.0
+        allow_dyn_slide: True
+      agent_6_oracle_nav_randcoord_action_obstacle:
+        type: OracleNavRandCoordAction_Obstacle
+        motion_control: human_joints
+        lin_speed: 10.0
+        ang_speed: 10.0
+        allow_dyn_slide: True
+
+habitat_baselines:
+  evaluate: False
+  verbose: True
+  trainer_name: "falcon_trainer"
+  torch_gpu_id: 0
+  tensorboard_dir: "evaluation/falcon/evalsafe_hm3d_2v100/tb"
+  video_dir: "evaluation/falcon/evalsafe_hm3d_2v100/video"
+  test_episode_count: -1
+
+  # OPTIMIZATION 1: Increase parallel environments (4 -> 16)
+  # More environments = better GPU utilization
+  # 16 envs * 2 GPUs = 32 total parallel simulations
+  num_environments: 16
+
+  checkpoint_folder: "evaluation/falcon/evalsafe_hm3d_2v100/checkpoints"
+  num_updates: -1
+  total_num_steps: 1600000  # 1.2M steps for full two-phase curriculum
+  log_interval: 10
+  num_checkpoints: 20
+
+  # OPTIMIZATION 2: Enable multi-threading for better CPU utilization
+  # Set to False to allow PyTorch to use multiple threads
+  force_torch_single_threaded: False
+
+  load_resume_state_config: False
+
+  evaluator:
+    _target_: habitat_baselines.rl.ppo.falcon_evaluator.FALCONEvaluator
+
+  eval:
+    use_ckpt_config: False
+    should_load_ckpt: True
+
+  rl:
+    agent:
+      type: "MultiAgentAccessMgr"
+      num_agent_types: 7
+      num_active_agents_per_type: [1, 1, 1, 1, 1, 1, 1]
+      num_pool_agents_per_type: [1, 1, 1, 1, 1, 1, 1]
+      agent_sample_interval: 20
+      force_partner_sample_idx: -1
+    policy:
+      agent_0:
+        name: "PointNavResNetPolicy"
+    ppo:
+      # OPTIMIZATION 3: Increase batch size for better GPU utilization
+      clip_param: 0.2
+      ppo_epoch: 4  # Increased from 2 to 4 for more gradient updates
+      num_mini_batch: 4  # Increased from 2 to 4 for larger effective batch size
+      value_loss_coef: 0.5
+      entropy_coef: 0.01
+      lr: 2.0e-4  # Slightly increased for larger batch size
+      eps: 1e-5
+      max_grad_norm: 0.2
+      num_steps: 128
+      use_gae: True
+      gamma: 0.99
+      tau: 0.95
+      use_linear_clip_decay: False
+      use_linear_lr_decay: False
+
+      # OPTIMIZATION 7: Warmup + Cosine Decay LR Schedule
+      # Linear warmup for 10% of training, then cosine decay to 0
+      # Reduces oscillation and improves convergence
+      use_warmup_cosine_lr_schedule: True
+      lr_schedule_warmup_percent: 0.1  # 10% warmup (100k steps out of 1M)
+
+      reward_window_size: 50
+      use_normalized_advantage: False
+
+      # OPTIMIZATION 4: Full model size for maximum performance
+      # Larger model = better GPU utilization and accuracy
+      hidden_size: 512
+
+      # Double buffered sampling not supported in multi-agent training
+      use_double_buffered_sampler: False
+
+      # NOTE: Action smoothness loss is enabled by default (hardcoded to 0.01 in ppo.py)
+
+    ddppo:
+      # OPTIMIZATION 5: Enable distributed training
+      sync_frac: 0.6
+      distrib_backend: NCCL
+
+      # Use full model pretrained weights
+      pretrained_weights: pretrained_model/pretrained_habitat3.pth
+      pretrained: True
+      pretrained_encoder: False
+      train_encoder: True
+      reset_critic: True
+
+      # EVAL-SAFE: ResNet50 backbone (compatible with commit 5d8ec1d1cf)
+      # DO NOT change to dual_stream_fpn (incompatible with original eval code)
+      backbone: resnet50
+      rnn_type: LSTM
+      num_recurrent_layers: 2
+
+      # Force distributed mode for multi-GPU training
+      # This enables proper multi-GPU utilization via DD-PPO
+      force_distributed: True
+
+    auxiliary_losses:
+      people_counting:
+        max_human_num: 6
+        loss_scale: 0.1
+      guess_human_position:
+        max_human_num: 6
+        position_dim: 2
+        loss_scale: 0.1
+      future_trajectory_prediction:
+        max_human_num: 6
+        future_step: 4
+        loss_scale: 0.1
+
+        # Transformer-MDN Architecture parameters
+        num_mixture_components: 5
+        transformer_layers: 2
+        transformer_heads: 8
+
+        # Two-Phase Curriculum Training (ENABLED)
+        use_curriculum: true
+        warmstart_steps: 160000  # Phase 1: 0-100k steps (freeze backbone, train Transformer-MDN only)
+        warmstart_aux_lr_multiplier: 5.0  # Phase 1: 5x higher loss scale for faster convergence
+        finetune_loss_weight_normalize: true  # Phase 2: 100k+ steps (joint training with normalized gradients)
+
+        # These modules will be REMOVED by process_ckp_for_eval.py
