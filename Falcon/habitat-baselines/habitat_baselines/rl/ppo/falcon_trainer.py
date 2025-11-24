@@ -276,7 +276,7 @@ class FalconTrainer(BaseRLTrainer):
 
         self._agent = self._create_agent(resume_state)
         if self._is_distributed:
-            self._agent.init_distributed(find_unused_params=False)  # type: ignore # Performance: No unused params detected
+            self._agent.init_distributed(find_unused_params=True)  # type: ignore # Dynamic model needs unused param detection
         self._agent.post_init()
 
         self._is_static_encoder = (

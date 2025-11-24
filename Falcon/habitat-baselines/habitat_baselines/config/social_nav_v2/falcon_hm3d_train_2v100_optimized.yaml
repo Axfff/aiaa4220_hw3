@@ -40,9 +40,6 @@ habitat:
     content_scenes: ["*"]  # 使用所有145个HM3D训练场景
   simulator:
     scene_dataset: "data/scene_datasets/hm3d/hm3d.scene_dataset_config.json"
-    # Enable lighting for robot assets to fix rendering warnings
-    renderer:
-      enable_pbr: True  # Physically-based rendering for proper lighting
   environment:
     # OPTIMIZATION: Environment diversity settings to avoid overfitting
     iterator_options:
